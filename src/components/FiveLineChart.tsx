@@ -1,11 +1,5 @@
-/**
- * 五線譜圖表元件
- *
- * 3.5Y（slow）→ 單張圖：五線 + 通道疊加（對應 view.py render_combined_chart）
- * 6M / 3M（fast）→ 兩張圖：上圖五線、下圖通道（對應 view.py render_fast_five_lines_chart）
- */
 import React, { useMemo, useState } from 'react';
-import { Dimensions, StyleSheet, Text, View } from 'react-native';
+import { Dimensions, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Svg, { G, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
 import { FiveLinesResult } from '../core/fiveLines';
 
@@ -58,6 +52,10 @@ const FAST_LINES = [
   { key: 'pessimistic' as const, color: '#34c759', dash: undefined },
 ] as const;
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
 function createXPositions(dates: number[], left: number, width: number): number[] {
   if (dates.length <= 1) return [left];
   const min = dates[0];
@@ -66,15 +64,27 @@ function createXPositions(dates: number[], left: number, width: number): number[
   return dates.map(date => left + ((date - min) / span) * width);
 }
 
-function buildPath(
-  values: (number | null)[],
-  xPositions: number[],
-  yFn: (v: number) => number
-): string {
+function sliceFiveLinesData(data: FiveLinesResult, startIndex: number, endIndex: number): FiveLinesResult {
+  return {
+    ...data,
+    dates: data.dates.slice(startIndex, endIndex + 1),
+    close: data.close.slice(startIndex, endIndex + 1),
+    trend: data.trend.slice(startIndex, endIndex + 1),
+    optimistic: data.optimistic.slice(startIndex, endIndex + 1),
+    resistance: data.resistance.slice(startIndex, endIndex + 1),
+    support: data.support.slice(startIndex, endIndex + 1),
+    pessimistic: data.pessimistic.slice(startIndex, endIndex + 1),
+    channelMa: data.channelMa.slice(startIndex, endIndex + 1),
+    channelTop: data.channelTop.slice(startIndex, endIndex + 1),
+    channelBot: data.channelBot.slice(startIndex, endIndex + 1),
+  };
+}
+
+function buildPath(values: (number | null)[], xPositions: number[], yFn: (v: number) => number): string {
   let d = '';
   let pen = false;
 
-  for (let i = 0; i < values.length; i++) {
+  for (let i = 0; i < values.length; i += 1) {
     const value = values[i];
     if (value == null) {
       pen = false;
@@ -82,9 +92,8 @@ function buildPath(
     }
 
     const x = xPositions[i]?.toFixed(1);
-    const y = yFn(value).toFixed(1);
     if (!x) continue;
-
+    const y = yFn(value).toFixed(1);
     d += pen ? ` L${x},${y}` : ` M${x},${y}`;
     pen = true;
   }
@@ -99,7 +108,7 @@ function buildBand(
   yFn: (v: number) => number
 ): string {
   const segments: string[] = [];
-  let current: { bottom: number; i: number; top: number }[] = [];
+  let current: { bottom: number; index: number; top: number }[] = [];
 
   const flush = () => {
     if (current.length < 2) {
@@ -108,26 +117,26 @@ function buildBand(
     }
 
     const upper = current
-      .map(point => `${xPositions[point.i].toFixed(1)},${yFn(point.top).toFixed(1)}`)
+      .map(point => `${xPositions[point.index].toFixed(1)},${yFn(point.top).toFixed(1)}`)
       .join(' L');
     const lower = current
       .slice()
       .reverse()
-      .map(point => `${xPositions[point.i].toFixed(1)},${yFn(point.bottom).toFixed(1)}`)
+      .map(point => `${xPositions[point.index].toFixed(1)},${yFn(point.bottom).toFixed(1)}`)
       .join(' L');
 
     segments.push(`M${upper} L${lower} Z`);
     current = [];
   };
 
-  for (let i = 0; i < top.length; i++) {
+  for (let i = 0; i < top.length; i += 1) {
     const t = top[i];
     const b = bottom[i];
     if (t == null || b == null) {
       flush();
       continue;
     }
-    current.push({ bottom: b, i, top: t });
+    current.push({ bottom: b, index: i, top: t });
   }
 
   flush();
@@ -154,7 +163,7 @@ function xLabels(dates: number[], years: number, xPositions: number[]) {
   const count = years >= 1 ? 4 : 3;
   const labels: { label: string; x: number }[] = [];
 
-  for (let k = 0; k <= count; k++) {
+  for (let k = 0; k <= count; k += 1) {
     const index = Math.min(dates.length - 1, Math.round((k / count) * (dates.length - 1)));
     const date = new Date(dates[index]);
     const yy = date.getFullYear();
@@ -177,7 +186,7 @@ function findNearestIndex(xPositions: number[], x: number): number {
   let bestIndex = 0;
   let bestDistance = Number.POSITIVE_INFINITY;
 
-  for (let i = 0; i < xPositions.length; i++) {
+  for (let i = 0; i < xPositions.length; i += 1) {
     const distance = Math.abs(xPositions[i] - clamped);
     if (distance < bestDistance) {
       bestDistance = distance;
@@ -186,10 +195,6 @@ function findNearestIndex(xPositions: number[], x: number): number {
   }
 
   return bestIndex;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
 }
 
 function formatDate(timestamp: number): string {
@@ -214,13 +219,93 @@ function valueTone(value: number | null, previousValue?: number | null): string 
   return '#1d1d1f';
 }
 
-function TooltipCard({
-  dateLabel,
-  sections,
-}: {
-  dateLabel: string;
-  sections: TooltipSection[];
-}) {
+function sortTooltipItems(items: TooltipItem[]): TooltipItem[] {
+  return [...items].sort((a, b) => {
+    const aValue = a.value ?? Number.NEGATIVE_INFINITY;
+    const bValue = b.value ?? Number.NEGATIVE_INFINITY;
+    return bValue - aValue;
+  });
+}
+
+function buildFiveTooltipSection(data: FiveLinesResult, index: number, fast: boolean): TooltipSection {
+  return {
+    title: '五線譜',
+    items: sortTooltipItems([
+      {
+        color: '#1d1d1f',
+        label: '收盤價',
+        previousValue: data.close[index - 1] ?? null,
+        value: data.close[index] ?? null,
+      },
+      {
+        color: fast ? '#8e8e93' : '#86868b',
+        label: '趨勢線',
+        previousValue: data.trend[index - 1] ?? null,
+        value: data.trend[index] ?? null,
+      },
+      {
+        color: fast ? '#ff3b30' : '#e1e1e6',
+        label: '+2σ 極度貪婪',
+        previousValue: data.optimistic[index - 1] ?? null,
+        value: data.optimistic[index] ?? null,
+      },
+      {
+        color: fast ? '#ff9500' : '#d1d1d6',
+        label: '+1σ 貪婪',
+        previousValue: data.resistance[index - 1] ?? null,
+        value: data.resistance[index] ?? null,
+      },
+      {
+        color: fast ? '#ffcc00' : '#d1d1d6',
+        label: '-1σ 恐懼',
+        previousValue: data.support[index - 1] ?? null,
+        value: data.support[index] ?? null,
+      },
+      {
+        color: fast ? '#34c759' : '#e1e1e6',
+        label: '-2σ 極度恐懼',
+        previousValue: data.pessimistic[index - 1] ?? null,
+        value: data.pessimistic[index] ?? null,
+      },
+    ]),
+  };
+}
+
+function buildChannelTooltipSection(data: FiveLinesResult, index: number): TooltipSection {
+  return {
+    title: '樂活通道',
+    items: sortTooltipItems(
+      [
+        {
+          color: '#1d1d1f',
+          label: '收盤價',
+          previousValue: data.close[index - 1] ?? null,
+          value: data.close[index] ?? null,
+        },
+        {
+          color: '#0071e3',
+          label: '通道上軌',
+          previousValue: data.channelTop[index - 1] ?? null,
+          value: data.channelTop[index] ?? null,
+        },
+        {
+          color: '#0071e3',
+          label: '通道下軌',
+          previousValue: data.channelBot[index - 1] ?? null,
+          value: data.channelBot[index] ?? null,
+        },
+        {
+          color: '#5ac8fa',
+          label: '20 日均線',
+          previousValue: data.channelMa[index - 1] ?? null,
+          value: data.channelMa[index] ?? null,
+        },
+      ].filter(item => item.value != null)
+    ),
+  };
+}
+
+function TooltipCard({ dateLabel, sections }: { dateLabel: string; sections: TooltipSection[] }) {
   return (
     <View pointerEvents="none" style={s.tooltip}>
       <Text style={s.tooltipDate}>{dateLabel}</Text>
@@ -244,23 +329,13 @@ function TooltipCard({
   );
 }
 
-function TouchOverlay({
-  height,
-  onClear,
-  onTouch,
-}: {
-  height: number;
-  onClear: () => void;
-  onTouch: (x: number) => void;
-}) {
+function TouchOverlay({ height, onTouch }: { height: number; onTouch: (x: number) => void }) {
   return (
     <View
       style={[StyleSheet.absoluteFillObject, { height }]}
       onMoveShouldSetResponder={() => true}
       onResponderGrant={event => onTouch(event.nativeEvent.locationX)}
       onResponderMove={event => onTouch(event.nativeEvent.locationX)}
-      onResponderRelease={onClear}
-      onResponderTerminate={onClear}
       onStartShouldSetResponder={() => true}
     />
   );
@@ -277,14 +352,8 @@ function FivePanel({ activeIndex, data, H, PAD, showXLabel, W, xPositions }: Pan
   );
   const lines = data.years < 1 ? FAST_LINES : SLOW_LINES;
   const isFast = data.years < 1;
-
   const yFn = (value: number) => PAD.top + chartH - ((value - minY) / (maxY - minY)) * chartH;
-
-  const yTicks = useMemo(() => {
-    const ticks: number[] = [];
-    for (let i = 0; i <= 4; i++) ticks.push(minY + ((maxY - minY) * i) / 4);
-    return ticks;
-  }, [maxY, minY]);
+  const yTicks = useMemo(() => Array.from({ length: 5 }, (_, i) => minY + ((maxY - minY) * i) / 4), [maxY, minY]);
 
   const upperBand = isFast
     ? buildBand(
@@ -312,21 +381,8 @@ function FivePanel({ activeIndex, data, H, PAD, showXLabel, W, xPositions }: Pan
 
       {yTicks.map((value, index) => (
         <G key={`grid-${index}`}>
-          <Line
-            x1={PAD.left}
-            y1={yFn(value)}
-            x2={W - PAD.right}
-            y2={yFn(value)}
-            stroke={GRID}
-            strokeWidth={1}
-          />
-          <SvgText
-            x={W - PAD.right + 2}
-            y={yFn(value) + 3}
-            fill={AXIS}
-            fontSize={9}
-            textAnchor="start"
-          >
+          <Line x1={PAD.left} y1={yFn(value)} x2={W - PAD.right} y2={yFn(value)} stroke={GRID} strokeWidth={1} />
+          <SvgText x={W - PAD.right + 2} y={yFn(value) + 3} fill={AXIS} fontSize={9} textAnchor="start">
             {value >= 1000 ? `${(value / 1000).toFixed(1)}k` : value.toFixed(1)}
           </SvgText>
         </G>
@@ -339,16 +395,7 @@ function FivePanel({ activeIndex, data, H, PAD, showXLabel, W, xPositions }: Pan
 
       {lines.map(({ color, dash, key }) => {
         const path = buildPath(data[key], xPositions, yFn);
-        return path ? (
-          <Path
-            key={key}
-            d={path}
-            stroke={color}
-            strokeWidth={1.2}
-            fill="none"
-            strokeDasharray={dash}
-          />
-        ) : null;
+        return path ? <Path key={key} d={path} stroke={color} strokeWidth={1.2} fill="none" strokeDasharray={dash} /> : null;
       })}
 
       {(() => {
@@ -368,19 +415,20 @@ function FivePanel({ activeIndex, data, H, PAD, showXLabel, W, xPositions }: Pan
         />
       ) : null}
 
-      {showXLabel &&
-        labels.map(({ label, x }, index) => (
-          <SvgText
-            key={`x-label-${index}`}
-            x={x}
-            y={H - 6}
-            textAnchor={index === 0 ? 'start' : index === labels.length - 1 ? 'end' : 'middle'}
-            fill={AXIS}
-            fontSize={9}
-          >
-            {label}
-          </SvgText>
-        ))}
+      {showXLabel
+        ? labels.map(({ label, x }, index) => (
+            <SvgText
+              key={`x-label-${index}`}
+              x={x}
+              y={H - 6}
+              textAnchor={index === 0 ? 'start' : index === labels.length - 1 ? 'end' : 'middle'}
+              fill={AXIS}
+              fontSize={9}
+            >
+              {label}
+            </SvgText>
+          ))
+        : null}
     </Svg>
   );
 }
@@ -395,13 +443,7 @@ function ChannelPanel({ activeIndex, data, H, PAD, showXLabel, W, xPositions }: 
     [data.dates, data.years, showXLabel, xPositions]
   );
   const yFn = (value: number) => PAD.top + chartH - ((value - minY) / (maxY - minY)) * chartH;
-
-  const yTicks = useMemo(() => {
-    const ticks: number[] = [];
-    for (let i = 0; i <= 3; i++) ticks.push(minY + ((maxY - minY) * i) / 3);
-    return ticks;
-  }, [maxY, minY]);
-
+  const yTicks = useMemo(() => Array.from({ length: 4 }, (_, i) => minY + ((maxY - minY) * i) / 3), [maxY, minY]);
   const channelFill = buildBand(data.channelTop, data.channelBot, xPositions, yFn);
 
   return (
@@ -411,21 +453,8 @@ function ChannelPanel({ activeIndex, data, H, PAD, showXLabel, W, xPositions }: 
 
       {yTicks.map((value, index) => (
         <G key={`channel-grid-${index}`}>
-          <Line
-            x1={PAD.left}
-            y1={yFn(value)}
-            x2={W - PAD.right}
-            y2={yFn(value)}
-            stroke={GRID}
-            strokeWidth={1}
-          />
-          <SvgText
-            x={W - PAD.right + 2}
-            y={yFn(value) + 3}
-            fill={AXIS}
-            fontSize={9}
-            textAnchor="start"
-          >
+          <Line x1={PAD.left} y1={yFn(value)} x2={W - PAD.right} y2={yFn(value)} stroke={GRID} strokeWidth={1} />
+          <SvgText x={W - PAD.right + 2} y={yFn(value) + 3} fill={AXIS} fontSize={9} textAnchor="start">
             {value >= 1000 ? `${(value / 1000).toFixed(1)}k` : value.toFixed(1)}
           </SvgText>
         </G>
@@ -439,15 +468,11 @@ function ChannelPanel({ activeIndex, data, H, PAD, showXLabel, W, xPositions }: 
       })()}
       {(() => {
         const path = buildPath(data.channelBot, xPositions, yFn);
-        return path ? (
-          <Path d={path} stroke="#0071e3" strokeWidth={1.5} fill="none" strokeDasharray="1,3" />
-        ) : null;
+        return path ? <Path d={path} stroke="#0071e3" strokeWidth={1.5} fill="none" strokeDasharray="1,3" /> : null;
       })()}
       {(() => {
         const path = buildPath(data.channelMa, xPositions, yFn);
-        return path ? (
-          <Path d={path} stroke="#5ac8fa" strokeWidth={1} fill="none" strokeDasharray="4,2,1,2" />
-        ) : null;
+        return path ? <Path d={path} stroke="#5ac8fa" strokeWidth={1} fill="none" strokeDasharray="4,2,1,2" /> : null;
       })()}
       {(() => {
         const path = buildPath(data.close, xPositions, yFn);
@@ -466,19 +491,20 @@ function ChannelPanel({ activeIndex, data, H, PAD, showXLabel, W, xPositions }: 
         />
       ) : null}
 
-      {showXLabel &&
-        labels.map(({ label, x }, index) => (
-          <SvgText
-            key={`channel-x-label-${index}`}
-            x={x}
-            y={H - 6}
-            textAnchor={index === 0 ? 'start' : index === labels.length - 1 ? 'end' : 'middle'}
-            fill={AXIS}
-            fontSize={9}
-          >
-            {label}
-          </SvgText>
-        ))}
+      {showXLabel
+        ? labels.map(({ label, x }, index) => (
+            <SvgText
+              key={`channel-x-label-${index}`}
+              x={x}
+              y={H - 6}
+              textAnchor={index === 0 ? 'start' : index === labels.length - 1 ? 'end' : 'middle'}
+              fill={AXIS}
+              fontSize={9}
+            >
+              {label}
+            </SvgText>
+          ))
+        : null}
     </Svg>
   );
 }
@@ -486,23 +512,11 @@ function ChannelPanel({ activeIndex, data, H, PAD, showXLabel, W, xPositions }: 
 function SlowCombinedPanel({ activeIndex, data, H, PAD, W, xPositions }: Omit<PanelBaseProps, 'showXLabel'>) {
   const chartW = W - PAD.left - PAD.right;
   const chartH = H - PAD.top - PAD.bottom;
-  const allValues = [
-    data.optimistic,
-    data.pessimistic,
-    data.close as (number | null)[],
-    data.channelTop,
-    data.channelBot,
-  ];
+  const allValues = [data.optimistic, data.pessimistic, data.close as (number | null)[], data.channelTop, data.channelBot];
   const { maxY, minY } = useMemo(() => yRange(allValues), [data]);
   const labels = useMemo(() => xLabels(data.dates, data.years, xPositions), [data.dates, data.years, xPositions]);
   const yFn = (value: number) => PAD.top + chartH - ((value - minY) / (maxY - minY)) * chartH;
-
-  const yTicks = useMemo(() => {
-    const ticks: number[] = [];
-    for (let i = 0; i <= 4; i++) ticks.push(minY + ((maxY - minY) * i) / 4);
-    return ticks;
-  }, [maxY, minY]);
-
+  const yTicks = useMemo(() => Array.from({ length: 5 }, (_, i) => minY + ((maxY - minY) * i) / 4), [maxY, minY]);
   const allBand = buildBand(data.optimistic, data.pessimistic, xPositions, yFn);
   const channelFill = buildBand(data.channelTop, data.channelBot, xPositions, yFn);
 
@@ -513,21 +527,8 @@ function SlowCombinedPanel({ activeIndex, data, H, PAD, W, xPositions }: Omit<Pa
 
       {yTicks.map((value, index) => (
         <G key={`slow-grid-${index}`}>
-          <Line
-            x1={PAD.left}
-            y1={yFn(value)}
-            x2={W - PAD.right}
-            y2={yFn(value)}
-            stroke={GRID}
-            strokeWidth={1}
-          />
-          <SvgText
-            x={W - PAD.right + 2}
-            y={yFn(value) + 3}
-            fill={AXIS}
-            fontSize={9}
-            textAnchor="start"
-          >
+          <Line x1={PAD.left} y1={yFn(value)} x2={W - PAD.right} y2={yFn(value)} stroke={GRID} strokeWidth={1} />
+          <SvgText x={W - PAD.right + 2} y={yFn(value) + 3} fill={AXIS} fontSize={9} textAnchor="start">
             {value >= 1000 ? `${(value / 1000).toFixed(1)}k` : value.toFixed(1)}
           </SvgText>
         </G>
@@ -542,16 +543,12 @@ function SlowCombinedPanel({ activeIndex, data, H, PAD, W, xPositions }: Omit<Pa
       })()}
       {(() => {
         const path = buildPath(data.channelBot, xPositions, yFn);
-        return path ? (
-          <Path d={path} stroke="#0071e3" strokeWidth={1} fill="none" opacity={0.5} strokeDasharray="3,2" />
-        ) : null;
+        return path ? <Path d={path} stroke="#0071e3" strokeWidth={1} fill="none" opacity={0.5} strokeDasharray="3,2" /> : null;
       })()}
 
       {SLOW_LINES.map(({ color, dash, key }) => {
         const path = buildPath(data[key], xPositions, yFn);
-        return path ? (
-          <Path key={key} d={path} stroke={color} strokeWidth={1.2} fill="none" strokeDasharray={dash} />
-        ) : null;
+        return path ? <Path key={key} d={path} stroke={color} strokeWidth={1.2} fill="none" strokeDasharray={dash} /> : null;
       })}
 
       {(() => {
@@ -589,9 +586,7 @@ function SlowCombinedPanel({ activeIndex, data, H, PAD, W, xPositions }: Omit<Pa
 
 function Legend({ isFast, hasChannel }: { hasChannel: boolean; isFast: boolean }) {
   const lines = isFast ? FAST_LINES : SLOW_LINES;
-  const labels = isFast
-    ? ['+2σ 樂觀', '+1σ 壓力', '趨勢線', '-1σ 支撐', '-2σ 悲觀']
-    : ['+2σ', '+1σ', '趨勢線', '-1σ', '-2σ'];
+  const labels = ['+2σ 極度貪婪', '+1σ 貪婪', '趨勢線', '-1σ 恐懼', '-2σ 極度恐懼'];
 
   return (
     <View style={s.legend}>
@@ -603,7 +598,7 @@ function Legend({ isFast, hasChannel }: { hasChannel: boolean; isFast: boolean }
       ))}
       <View style={s.legendItem}>
         <View style={[s.legendLine, { backgroundColor: '#1d1d1f' }]} />
-        <Text style={s.legendText}>收盤</Text>
+        <Text style={s.legendText}>收盤價</Text>
       </View>
       {hasChannel ? (
         <View style={s.legendItem}>
@@ -617,181 +612,107 @@ function Legend({ isFast, hasChannel }: { hasChannel: boolean; isFast: boolean }
 
 export function FiveLineChart({ data }: Props) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [zoomLevel, setZoomLevel] = useState(0);
   const screenW = Dimensions.get('window').width;
   const W = screenW - W_PAD;
   const PAD_FAST = { top: 12, right: 46, bottom: 20, left: 4 };
   const PAD_CHANNEL = { top: 8, right: 46, bottom: 24, left: 4 };
   const PAD_SLOW = { top: 12, right: 46, bottom: 28, left: 4 };
   const isFast = data.years < 1;
+  const zoomRatios = [1, 0.72, 0.5, 0.32];
+
+  const visibleWindow = useMemo(() => {
+    const total = data.dates.length;
+    if (total <= 1) return { endIndex: Math.max(total - 1, 0), startIndex: 0 };
+
+    const ratio = zoomRatios[zoomLevel] ?? 1;
+    const minWindow = Math.min(total, isFast ? 24 : 40);
+    const windowSize = Math.max(minWindow, Math.round(total * ratio));
+
+    if (windowSize >= total) {
+      return { endIndex: total - 1, startIndex: 0 };
+    }
+
+    if (activeIndex == null) {
+      return { endIndex: total - 1, startIndex: total - windowSize };
+    }
+
+    const half = Math.floor(windowSize / 2);
+    let startIndex = activeIndex - half;
+    let endIndex = startIndex + windowSize - 1;
+
+    if (startIndex < 0) {
+      startIndex = 0;
+      endIndex = windowSize - 1;
+    }
+
+    if (endIndex >= total) {
+      endIndex = total - 1;
+      startIndex = total - windowSize;
+    }
+
+    return { endIndex, startIndex };
+  }, [activeIndex, data.dates.length, isFast, zoomLevel]);
+
+  const chartData = useMemo(
+    () => sliceFiveLinesData(data, visibleWindow.startIndex, visibleWindow.endIndex),
+    [data, visibleWindow.endIndex, visibleWindow.startIndex]
+  );
 
   const chartWFast = W - PAD_FAST.left - PAD_FAST.right;
   const chartWSlow = W - PAD_SLOW.left - PAD_SLOW.right;
   const xPositionsFast = useMemo(
-    () => createXPositions(data.dates, PAD_FAST.left, chartWFast),
-    [chartWFast, data.dates]
+    () => createXPositions(chartData.dates, PAD_FAST.left, chartWFast),
+    [chartData.dates, chartWFast]
   );
   const xPositionsSlow = useMemo(
-    () => createXPositions(data.dates, PAD_SLOW.left, chartWSlow),
-    [chartWSlow, data.dates]
+    () => createXPositions(chartData.dates, PAD_SLOW.left, chartWSlow),
+    [chartData.dates, chartWSlow]
   );
 
   const touchXPositions = isFast ? xPositionsFast : xPositionsSlow;
-  const selectedIndex = activeIndex ?? data.dates.length - 1;
+  const visibleActiveIndex =
+    activeIndex == null ? null : clamp(activeIndex - visibleWindow.startIndex, 0, chartData.dates.length - 1);
+  const selectedIndex = visibleActiveIndex ?? Math.max(chartData.dates.length - 1, 0);
+  const canZoomIn = zoomLevel < zoomRatios.length - 1;
+  const canZoomOut = zoomLevel > 0;
 
   const fastTooltipSections = useMemo<TooltipSection[]>(
-    () =>
-        [
-            {
-              title: '五線譜',
-              items: [
-                {
-                  color: '#1d1d1f',
-                  label: '收盤價',
-                  previousValue: data.close[selectedIndex - 1] ?? null,
-                  value: data.close[selectedIndex] ?? null,
-                },
-                {
-                  color: '#8e8e93',
-                  label: '趨勢線',
-                  previousValue: data.trend[selectedIndex - 1] ?? null,
-                  value: data.trend[selectedIndex] ?? null,
-                },
-                {
-                  color: '#ff3b30',
-                  label: '+2σ 樂觀線',
-                  previousValue: data.optimistic[selectedIndex - 1] ?? null,
-                  value: data.optimistic[selectedIndex] ?? null,
-                },
-                {
-                  color: '#ff9500',
-                  label: '+1σ 壓力線',
-                  previousValue: data.resistance[selectedIndex - 1] ?? null,
-                  value: data.resistance[selectedIndex] ?? null,
-                },
-                {
-                  color: '#ffcc00',
-                  label: '-1σ 支撐線',
-                  previousValue: data.support[selectedIndex - 1] ?? null,
-                  value: data.support[selectedIndex] ?? null,
-                },
-                {
-                  color: '#34c759',
-                  label: '-2σ 悲觀線',
-                  previousValue: data.pessimistic[selectedIndex - 1] ?? null,
-                  value: data.pessimistic[selectedIndex] ?? null,
-                },
-              ],
-            },
-            {
-              title: '樂活通道',
-              items: [
-                {
-                  color: '#1d1d1f',
-                  label: '收盤價',
-                  previousValue: data.close[selectedIndex - 1] ?? null,
-                  value: data.close[selectedIndex] ?? null,
-                },
-                {
-                  color: '#0071e3',
-                  label: '通道上軌',
-                  previousValue: data.channelTop[selectedIndex - 1] ?? null,
-                  value: data.channelTop[selectedIndex] ?? null,
-                },
-                {
-                  color: '#0071e3',
-                  label: '通道下軌',
-                  previousValue: data.channelBot[selectedIndex - 1] ?? null,
-                  value: data.channelBot[selectedIndex] ?? null,
-                },
-                {
-                  color: '#5ac8fa',
-                  label: '20週均線',
-                  previousValue: data.channelMa[selectedIndex - 1] ?? null,
-                  value: data.channelMa[selectedIndex] ?? null,
-                },
-              ].filter(item => item.value != null),
-            },
-          ],
-    [data, selectedIndex]
+    () => [buildFiveTooltipSection(chartData, selectedIndex, true), buildChannelTooltipSection(chartData, selectedIndex)],
+    [chartData, selectedIndex]
   );
 
   const slowTooltipSections = useMemo<TooltipSection[]>(
-    () =>
-        [
-            {
-              title: '五線譜',
-              items: [
-                {
-                  color: '#1d1d1f',
-                  label: '收盤價',
-                  previousValue: data.close[selectedIndex - 1] ?? null,
-                  value: data.close[selectedIndex] ?? null,
-                },
-                {
-                  color: '#86868b',
-                  label: '趨勢線',
-                  previousValue: data.trend[selectedIndex - 1] ?? null,
-                  value: data.trend[selectedIndex] ?? null,
-                },
-                {
-                  color: '#d1d1d6',
-                  label: '+1σ 壓力線',
-                  previousValue: data.resistance[selectedIndex - 1] ?? null,
-                  value: data.resistance[selectedIndex] ?? null,
-                },
-                {
-                  color: '#e1e1e6',
-                  label: '+2σ 樂觀線',
-                  previousValue: data.optimistic[selectedIndex - 1] ?? null,
-                  value: data.optimistic[selectedIndex] ?? null,
-                },
-                {
-                  color: '#d1d1d6',
-                  label: '-1σ 支撐線',
-                  previousValue: data.support[selectedIndex - 1] ?? null,
-                  value: data.support[selectedIndex] ?? null,
-                },
-                {
-                  color: '#e1e1e6',
-                  label: '-2σ 悲觀線',
-                  previousValue: data.pessimistic[selectedIndex - 1] ?? null,
-                  value: data.pessimistic[selectedIndex] ?? null,
-                },
-              ],
-            },
-            {
-              title: '樂活通道',
-              items: [
-                {
-                  color: '#0071e3',
-                  label: '通道上軌',
-                  previousValue: data.channelTop[selectedIndex - 1] ?? null,
-                  value: data.channelTop[selectedIndex] ?? null,
-                },
-                {
-                  color: '#0071e3',
-                  label: '通道下軌',
-                  previousValue: data.channelBot[selectedIndex - 1] ?? null,
-                  value: data.channelBot[selectedIndex] ?? null,
-                },
-                {
-                  color: '#5ac8fa',
-                  label: '20週均線',
-                  previousValue: data.channelMa[selectedIndex - 1] ?? null,
-                  value: data.channelMa[selectedIndex] ?? null,
-                },
-              ].filter(item => item.value != null),
-            },
-          ],
-    [data, selectedIndex]
+    () => [buildFiveTooltipSection(chartData, selectedIndex, false), buildChannelTooltipSection(chartData, selectedIndex)],
+    [chartData, selectedIndex]
   );
 
   const tooltipDate =
-    activeIndex == null
-      ? `${formatDate(data.dates[selectedIndex])}  最新`
-      : formatDate(data.dates[selectedIndex]);
-  const updateActiveIndex = (x: number) => setActiveIndex(findNearestIndex(touchXPositions, x));
-  const clearActiveIndex = () => setActiveIndex(null);
+    visibleActiveIndex == null
+      ? `${formatDate(chartData.dates[selectedIndex])}  最新`
+      : formatDate(chartData.dates[selectedIndex]);
+
+  const updateActiveIndex = (x: number) =>
+    setActiveIndex(visibleWindow.startIndex + findNearestIndex(touchXPositions, x));
+
+  const zoomControls = (
+    <View style={s.zoomControls}>
+      <TouchableOpacity
+        style={[s.zoomButton, !canZoomOut && s.zoomButtonDisabled]}
+        disabled={!canZoomOut}
+        onPress={() => setZoomLevel(level => Math.max(0, level - 1))}
+      >
+        <Text style={[s.zoomButtonText, !canZoomOut && s.zoomButtonTextDisabled]}>-</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[s.zoomButton, !canZoomIn && s.zoomButtonDisabled]}
+        disabled={!canZoomIn}
+        onPress={() => setZoomLevel(level => Math.min(zoomRatios.length - 1, level + 1))}
+      >
+        <Text style={[s.zoomButtonText, !canZoomIn && s.zoomButtonTextDisabled]}>+</Text>
+      </TouchableOpacity>
+    </View>
+  );
 
   if (isFast) {
     const upperHeight = 210;
@@ -802,9 +723,10 @@ export function FiveLineChart({ data }: Props) {
     return (
       <View style={s.card}>
         <View style={[s.chartArea, { height: chartAreaHeight }]}>
+          {zoomControls}
           <FivePanel
-            activeIndex={activeIndex}
-            data={data}
+            activeIndex={visibleActiveIndex}
+            data={chartData}
             H={upperHeight}
             PAD={PAD_FAST}
             showXLabel={false}
@@ -813,20 +735,18 @@ export function FiveLineChart({ data }: Props) {
           />
           <View style={s.divider} />
           <ChannelPanel
-            activeIndex={activeIndex}
-            data={data}
+            activeIndex={visibleActiveIndex}
+            data={chartData}
             H={lowerHeight}
             PAD={PAD_CHANNEL}
             showXLabel
             W={W}
             xPositions={xPositionsFast}
           />
-
-          <TouchOverlay height={chartAreaHeight} onClear={clearActiveIndex} onTouch={updateActiveIndex} />
+          <TouchOverlay height={chartAreaHeight} onTouch={updateActiveIndex} />
         </View>
 
         <TooltipCard dateLabel={tooltipDate} sections={fastTooltipSections} />
-
         <Legend hasChannel isFast />
       </View>
     );
@@ -837,20 +757,19 @@ export function FiveLineChart({ data }: Props) {
   return (
     <View style={s.card}>
       <View style={[s.chartArea, { height: slowHeight }]}>
+        {zoomControls}
         <SlowCombinedPanel
-          activeIndex={activeIndex}
-          data={data}
+          activeIndex={visibleActiveIndex}
+          data={chartData}
           H={slowHeight}
           PAD={PAD_SLOW}
           W={W}
           xPositions={xPositionsSlow}
         />
-
-        <TouchOverlay height={slowHeight} onClear={clearActiveIndex} onTouch={updateActiveIndex} />
+        <TouchOverlay height={slowHeight} onTouch={updateActiveIndex} />
       </View>
 
       <TooltipCard dateLabel={tooltipDate} sections={slowTooltipSections} />
-
       <Legend hasChannel isFast={false} />
     </View>
   );
@@ -868,6 +787,42 @@ const s = StyleSheet.create({
   },
   chartArea: {
     position: 'relative',
+  },
+  zoomControls: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    zIndex: 3,
+    flexDirection: 'row',
+    gap: 8,
+  },
+  zoomButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderWidth: 1,
+    borderColor: '#d0d7de',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 2,
+  },
+  zoomButtonDisabled: {
+    backgroundColor: '#f3f4f6',
+    borderColor: '#e5e7eb',
+  },
+  zoomButtonText: {
+    color: '#111827',
+    fontSize: 18,
+    lineHeight: 20,
+    fontWeight: '700',
+  },
+  zoomButtonTextDisabled: {
+    color: '#9ca3af',
   },
   divider: {
     height: 1,
@@ -925,7 +880,13 @@ const s = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 7,
   },
-  tooltipSectionTitle: { color: '#555', fontSize: 10, fontWeight: '700', marginBottom: 5, textTransform: 'uppercase' },
+  tooltipSectionTitle: {
+    color: '#555',
+    fontSize: 10,
+    fontWeight: '700',
+    marginBottom: 5,
+    textTransform: 'uppercase',
+  },
   tooltipRow: {
     flexDirection: 'row',
     alignItems: 'center',

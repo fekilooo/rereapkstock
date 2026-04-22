@@ -3,20 +3,18 @@ import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Alert } fr
 import { useRouter } from 'expo-router';
 import { WatchItemWithData, useWatchlist } from '../store/watchlist';
 import { SignalBadge } from './SignalBadge';
-import { Signal, SIGNAL_COLORS } from '../core/fiveLines';
+import { Signal } from '../core/fiveLines';
 
 interface Props {
   item: WatchItemWithData;
   index: number;
   total: number;
+  showActions: boolean;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
 }
 
-function SignalDot({ signal }: { signal?: Signal }) {
-  if (!signal) return <View style={[styles.dot, { backgroundColor: '#444' }]} />;
-  return <View style={[styles.dot, { backgroundColor: SIGNAL_COLORS[signal] }]} />;
-}
-
-export function StockListItem({ item, index, total }: Props) {
+export function StockListItem({ item, index, total, showActions, onMoveUp, onMoveDown }: Props) {
   const router = useRouter();
   const { remove, moveUp, moveDown } = useWatchlist();
   const changeColor = (item.change ?? 0) >= 0 ? '#43a047' : '#d32f2f';
@@ -26,8 +24,8 @@ export function StockListItem({ item, index, total }: Props) {
   const isFirst = index === 0;
   const isLast = index === total - 1;
   const displaySymbol = item.symbol.replace(/\.(TW|TWO)$/, '');
-  const isTaiwanStock = /\.(TW|TWO)$/.test(item.symbol);
-  const titleText = isTaiwanStock && item.name ? `${displaySymbol}${item.name}` : displaySymbol;
+  const hasName = !!item.name;
+  const primarySignal = item.signal3m ?? item.signal6m ?? item.signal3y;
 
   function confirmRemove() {
     Alert.alert(
@@ -47,56 +45,52 @@ export function StockListItem({ item, index, total }: Props) {
         onPress={() => router.push(`/stock/${encodeURIComponent(item.symbol)}`)}
         activeOpacity={0.7}
       >
-        <View style={styles.left}>
-          <Text style={styles.symbol} numberOfLines={1}>{titleText}</Text>
-          {!isTaiwanStock && !!item.name && (
-            <Text style={styles.name} numberOfLines={1}>{item.name}</Text>
-          )}
-        </View>
+        <Text style={styles.symbol} numberOfLines={1}>
+          {displaySymbol}
+          {hasName ? <Text style={styles.nameInline}>{` ${item.name}`}</Text> : null}
+        </Text>
 
-        <View style={styles.middle}>
+        <View style={styles.detailRow}>
           {item.loading ? (
             <ActivityIndicator size="small" color="#888" />
           ) : (
-            <>
-              <Text style={styles.price}>{item.price?.toFixed(2) ?? '---'}</Text>
-              <Text style={[styles.change, { color: changeColor }]}>{changeStr}</Text>
-            </>
-          )}
-        </View>
+            <View style={styles.detailContent}>
+              <View style={styles.priceWrap}>
+                <Text style={styles.price}>{item.price?.toFixed(2) ?? '---'}</Text>
+                <Text style={[styles.change, { color: changeColor }]}>{changeStr}</Text>
+              </View>
 
-        <View style={styles.signals}>
-          {item.signal3m && <SignalBadge signal={item.signal3m} small />}
-          <View style={styles.timeAxis}>
-            <SignalDot signal={item.signal3m} />
-            <SignalDot signal={item.signal6m} />
-            <SignalDot signal={item.signal3y} />
-          </View>
-          <Text style={styles.axisLabel}>3M 6M 3Y</Text>
+              <View style={styles.signalWrap}>
+                {primarySignal ? <SignalBadge signal={primarySignal} small /> : null}
+              </View>
+            </View>
+          )}
         </View>
       </TouchableOpacity>
 
-      <View style={styles.actionRow}>
-        <TouchableOpacity
-          style={[styles.actionBtn, isFirst && styles.disabledBtn]}
-          onPress={() => moveUp(item.symbol)}
-          activeOpacity={0.7}
-          disabled={isFirst}
-        >
-          <Text style={[styles.actionBtnText, isFirst && styles.disabledBtnText]}>上移</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.actionBtn, isLast && styles.disabledBtn]}
-          onPress={() => moveDown(item.symbol)}
-          activeOpacity={0.7}
-          disabled={isLast}
-        >
-          <Text style={[styles.actionBtnText, isLast && styles.disabledBtnText]}>下移</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.removeBtn} onPress={confirmRemove} activeOpacity={0.7}>
-          <Text style={styles.removeBtnText}>刪除</Text>
-        </TouchableOpacity>
-      </View>
+      {showActions ? (
+        <View style={styles.actionRow}>
+          <TouchableOpacity
+            style={[styles.actionBtn, isFirst && styles.disabledBtn]}
+            onPress={() => (onMoveUp ? onMoveUp() : moveUp(item.symbol))}
+            activeOpacity={0.7}
+            disabled={isFirst}
+          >
+            <Text style={[styles.actionBtnText, isFirst && styles.disabledBtnText]}>上移</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.actionBtn, isLast && styles.disabledBtn]}
+            onPress={() => (onMoveDown ? onMoveDown() : moveDown(item.symbol))}
+            activeOpacity={0.7}
+            disabled={isLast}
+          >
+            <Text style={[styles.actionBtnText, isLast && styles.disabledBtnText]}>下移</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.removeBtn} onPress={confirmRemove} activeOpacity={0.7}>
+            <Text style={styles.removeBtnText}>刪除</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -111,8 +105,29 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
   },
   mainTap: {
+    gap: 8,
+  },
+  detailRow: {
+    minHeight: 28,
+    justifyContent: 'center',
+  },
+  detailContent: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  priceWrap: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 10,
+    flex: 1,
+    minWidth: 0,
+  },
+  signalWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 0,
   },
   actionRow: {
     alignSelf: 'flex-end',
@@ -140,14 +155,8 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
   },
   removeBtnText: { color: '#ff7b72', fontSize: 12, fontWeight: '600' },
-  left: { flex: 1.2 },
-  middle: { flex: 1.5, alignItems: 'flex-end', marginRight: 12 },
-  signals: { alignItems: 'center' },
   symbol: { color: '#e6edf3', fontSize: 15, fontWeight: '700' },
-  name: { color: '#8b949e', fontSize: 12, marginTop: 2 },
-  price: { color: '#e6edf3', fontSize: 15, fontWeight: '600' },
-  change: { fontSize: 12, marginTop: 2 },
-  timeAxis: { flexDirection: 'row', gap: 4, marginVertical: 4 },
-  dot: { width: 10, height: 10, borderRadius: 5 },
-  axisLabel: { color: '#8b949e', fontSize: 10 },
+  nameInline: { color: '#8b949e', fontSize: 13, fontWeight: '500' },
+  price: { color: '#e6edf3', fontSize: 17, fontWeight: '700' },
+  change: { fontSize: 12, fontWeight: '600', flexShrink: 1 },
 });

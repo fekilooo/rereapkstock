@@ -29,6 +29,7 @@ interface WatchlistState {
   remove: (symbol: string) => Promise<void>;
   moveUp: (symbol: string) => Promise<void>;
   moveDown: (symbol: string) => Promise<void>;
+  reorder: (symbols: string[]) => Promise<void>;
   updateData: (symbol: string, data: Partial<WatchItemWithData>) => void;
   has: (symbol: string) => boolean;
 }
@@ -87,6 +88,19 @@ export const useWatchlist = create<WatchlistState>((set, get) => ({
     [items[index], items[index + 1]] = [items[index + 1], items[index]];
     set({ items });
     await persistItems(items);
+  },
+
+  reorder: async (symbols) => {
+    const current = get().items;
+    const lookup = new Map(current.map(item => [item.symbol, item]));
+    const next = symbols
+      .map(symbol => lookup.get(symbol))
+      .filter((item): item is WatchItemWithData => !!item);
+
+    if (next.length !== current.length) return;
+
+    set({ items: next });
+    await persistItems(next);
   },
 
   updateData: (symbol, data) => {
