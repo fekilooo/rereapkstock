@@ -1,3 +1,5 @@
+https://i.imgur.com/f7Qgl0J.png
+
 # 樂活五線譜 Lohas Stock App
 
 樂活五線譜是一款以 **台股 / 美股追蹤、五線譜技術分析、樂活通道、恐慌貪婪指數觀察** 為核心的 Android 股票 App。  
