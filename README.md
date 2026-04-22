@@ -1,6 +1,6 @@
 
 
-![Lohas Stock App ICON]([/assets/img/philly-magic-garden.jpg](https://i.imgur.com/f7Qgl0J.png) "ICON")
+![Lohas Stock App ICON]([(https://i.imgur.com/f7Qgl0J.png] "ICON")
 
 
 # 樂活五線譜 Lohas Stock App
