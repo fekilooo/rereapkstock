@@ -31,7 +31,7 @@ export default function SettingsScreen() {
   }, [loaded, load]);
 
   function clearAll() {
-    Alert.alert('清空最愛清單', '要把目前加入的最愛股票全部刪除嗎？', [
+    Alert.alert('清空觀察清單', '要把目前加入的觀察股票全部刪除嗎？', [
       { text: '取消', style: 'cancel' },
       {
         text: '全部刪除',
@@ -85,11 +85,11 @@ export default function SettingsScreen() {
         <View style={styles.cardDivider} />
 
         <View style={styles.dangerSection}>
-          <Text style={styles.dangerTitle}>清空最愛清單</Text>
-          <Text style={styles.dangerDesc}>一次移除目前所有最愛股票，這個動作無法復原。</Text>
+          <Text style={styles.dangerTitle}>清空觀察清單</Text>
+          <Text style={styles.dangerDesc}>一次移除目前所有觀察股票，這個動作無法復原。</Text>
 
           <TouchableOpacity style={styles.dangerBtn} onPress={clearAll}>
-            <Text style={styles.dangerText}>清空最愛清單 ({items.length})</Text>
+            <Text style={styles.dangerText}>清空觀察清單 ({items.length})</Text>
           </TouchableOpacity>
         </View>
       </View>

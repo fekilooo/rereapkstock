@@ -37,14 +37,14 @@ export default function SearchScreen() {
 
   async function handleAdd(item: StockInfo) {
     if (has(item.symbol)) {
-      Alert.alert('移除確認', `確定要從最愛移除 ${item.shortName}？`, [
+      Alert.alert('移除確認', `確定要從觀察清單移除 ${item.shortName}？`, [
         { text: '取消', style: 'cancel' },
         { text: '移除', style: 'destructive', onPress: () => remove(item.symbol) },
       ]);
       return;
     }
     await add(item.symbol, item.shortName);
-    Alert.alert('已加入', `${item.shortName} 已加入最愛清單`);
+    Alert.alert('已加入', `${item.shortName} 已加入觀察清單`);
   }
 
   return (
@@ -101,7 +101,7 @@ function SearchResultRow({
         <Text style={styles.rowName} numberOfLines={1}>{item.shortName}</Text>
       </View>
       <View style={[styles.addBtn, inWatchlist && styles.removeBtn]}>
-        <Text style={styles.addBtnText}>{inWatchlist ? '✓ 已加入' : '+ 加入最愛'}</Text>
+        <Text style={styles.addBtnText}>{inWatchlist ? '✓ 已加入' : '+ 加入觀察'}</Text>
       </View>
     </TouchableOpacity>
   );

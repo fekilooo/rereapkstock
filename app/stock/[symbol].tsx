@@ -34,7 +34,7 @@ export default function StockDetailScreen() {
   const { symbol: rawSymbol } = useLocalSearchParams<{ symbol: string }>();
   const symbol = decodeURIComponent(rawSymbol ?? '');
   const navigation = useNavigation();
-  const { has, add, remove } = useWatchlist();
+  const { items, add, remove, togglePriority } = useWatchlist();
 
   const [axis, setAxis] = useState<TimeAxis>('3.5Y');
   const [quote, setQuote] = useState<StockInfo | null>(null);
@@ -49,7 +49,9 @@ export default function StockDetailScreen() {
 
   const nextQuoteRefreshAtRef = useRef(0);
   const quoteRefreshInFlightRef = useRef(false);
-  const inWatchlist = has(symbol);
+  const currentWatchItem = items.find(item => item.symbol === symbol);
+  const inWatchlist = !!currentWatchItem;
+  const isPriority = !!currentWatchItem?.isPriority;
 
   useEffect(() => {
     if (!symbol) return;
@@ -151,7 +153,7 @@ export default function StockDetailScreen() {
 
   function toggleWatchlist() {
     if (inWatchlist) {
-      Alert.alert('移除最愛股票', `要把 ${displaySymbol(symbol)} 從最愛中移除嗎？`, [
+      Alert.alert('移除觀察股票', `要把 ${displaySymbol(symbol)} 從觀察清單移除嗎？`, [
         { text: '取消', style: 'cancel' },
         { text: '移除', style: 'destructive', onPress: () => remove(symbol) },
       ]);
@@ -159,6 +161,14 @@ export default function StockDetailScreen() {
     }
 
     void add(symbol, quote?.shortName ?? symbol);
+  }
+
+  async function togglePriorityMark() {
+    if (!inWatchlist) {
+      await add(symbol, quote?.shortName ?? symbol);
+    }
+
+    await togglePriority(symbol);
   }
 
   const currentData = allData[axis];
@@ -193,12 +203,23 @@ export default function StockDetailScreen() {
             <Text style={styles.quoteName}>{quote?.shortName}</Text>
           </View>
 
-          <TouchableOpacity
-            style={[styles.watchBtn, inWatchlist && styles.watchBtnActive]}
-            onPress={toggleWatchlist}
-          >
-            <Text style={styles.watchBtnText}>{inWatchlist ? '已在最愛' : '加入最愛'}</Text>
-          </TouchableOpacity>
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              style={[styles.watchBtn, inWatchlist && styles.watchBtnActive]}
+              onPress={toggleWatchlist}
+            >
+              <Text style={styles.watchBtnText}>{inWatchlist ? '已在觀察' : '加入觀察'}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.priorityBtn, isPriority && styles.priorityBtnActive]}
+              onPress={() => void togglePriorityMark()}
+            >
+              <Text style={[styles.priorityBtnText, isPriority && styles.priorityBtnTextActive]}>
+                {isPriority ? '★ 重點觀察' : '☆ 重點觀察'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <Text style={styles.quotePrice}>{quote?.regularMarketPrice?.toFixed(2)}</Text>
@@ -301,6 +322,10 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   quoteHeader: { flex: 1 },
+  headerActions: {
+    alignItems: 'flex-end',
+    gap: 8,
+  },
   quoteSymbol: { color: '#e6edf3', fontSize: 20, fontWeight: '700' },
   quoteName: { color: '#8b949e', fontSize: 13, marginTop: 2 },
   watchBtn: {
@@ -311,6 +336,26 @@ const styles = StyleSheet.create({
   },
   watchBtnActive: { backgroundColor: '#2d333b', borderWidth: 1, borderColor: '#f1c40f' },
   watchBtnText: { color: '#e6edf3', fontSize: 13 },
+  priorityBtn: {
+    backgroundColor: '#21262d',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#39414d',
+  },
+  priorityBtnActive: {
+    backgroundColor: '#3a2f04',
+    borderColor: '#f1c40f',
+  },
+  priorityBtnText: {
+    color: '#c9d1d9',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  priorityBtnTextActive: {
+    color: '#ffd54f',
+  },
   quotePrice: { color: '#e6edf3', fontSize: 32, fontWeight: '700' },
   quoteChange: { fontSize: 15, marginTop: 2 },
   tabs: {

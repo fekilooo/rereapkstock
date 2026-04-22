@@ -264,10 +264,10 @@ export default function HomeScreen() {
           )}
 
           <Text style={styles.sectionHeader}>
-            {items.length > 0 ? `最愛股票 (${items.length})` : '最愛股票'}
+            {items.length > 0 ? `觀察股票 (${items.length})` : '觀察股票'}
           </Text>
           {items.length === 0 ? (
-            <Text style={styles.emptyText}>還沒有加入股票，請到搜尋頁加入你想追蹤的標的。</Text>
+            <Text style={styles.emptyText}>還沒有加入觀察股票，請到搜尋頁加入你想追蹤的標的。</Text>
           ) : null}
         </View>
       }

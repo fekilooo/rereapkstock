@@ -39,7 +39,7 @@ export function StockListItem({ item, index, total, showActions, onMoveUp, onMov
   }
 
   return (
-    <View style={styles.row}>
+    <View style={[styles.row, item.isPriority && styles.priorityRow]}>
       <TouchableOpacity
         style={styles.mainTap}
         onPress={() => router.push(`/stock/${encodeURIComponent(item.symbol)}`)}
@@ -103,6 +103,18 @@ const styles = StyleSheet.create({
     marginVertical: 4,
     paddingVertical: 12,
     paddingHorizontal: 14,
+    position: 'relative',
+    borderWidth: 1,
+    borderColor: '#161b22',
+  },
+  priorityRow: {
+    borderColor: '#f1c40f',
+    backgroundColor: '#1b1a12',
+    shadowColor: '#000',
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
   },
   mainTap: {
     gap: 8,

@@ -8,6 +8,7 @@ export interface WatchItem {
   symbol: string;
   name: string;
   addedAt: number;
+  isPriority?: boolean;
 }
 
 export interface WatchItemWithData extends WatchItem {
@@ -30,6 +31,7 @@ interface WatchlistState {
   moveUp: (symbol: string) => Promise<void>;
   moveDown: (symbol: string) => Promise<void>;
   reorder: (symbols: string[]) => Promise<void>;
+  togglePriority: (symbol: string) => Promise<void>;
   updateData: (symbol: string, data: Partial<WatchItemWithData>) => void;
   has: (symbol: string) => boolean;
 }
@@ -37,7 +39,14 @@ interface WatchlistState {
 function persistItems(items: WatchItemWithData[]) {
   return AsyncStorage.setItem(
     STORAGE_KEY,
-    JSON.stringify(items.map(({ symbol, name, addedAt }) => ({ symbol, name, addedAt })))
+    JSON.stringify(
+      items.map(({ symbol, name, addedAt, isPriority }) => ({
+        symbol,
+        name,
+        addedAt,
+        isPriority: !!isPriority,
+      }))
+    )
   );
 }
 
@@ -49,7 +58,14 @@ export const useWatchlist = create<WatchlistState>((set, get) => ({
     try {
       const raw = await AsyncStorage.getItem(STORAGE_KEY);
       const items: WatchItem[] = raw ? JSON.parse(raw) : [];
-      set({ items: items.map(i => ({ ...i, loading: false })), loaded: true });
+      set({
+        items: items.map(i => ({
+          ...i,
+          isPriority: !!i.isPriority,
+          loading: false,
+        })),
+        loaded: true,
+      });
     } catch {
       set({ items: [], loaded: true });
     }
@@ -60,7 +76,7 @@ export const useWatchlist = create<WatchlistState>((set, get) => ({
     if (items.some(i => i.symbol === symbol)) return;
     const next: WatchItemWithData[] = [
       ...items,
-      { symbol, name, addedAt: Date.now(), loading: true },
+      { symbol, name, addedAt: Date.now(), isPriority: false, loading: true },
     ];
     set({ items: next });
     await persistItems(next);
@@ -98,6 +114,17 @@ export const useWatchlist = create<WatchlistState>((set, get) => ({
       .filter((item): item is WatchItemWithData => !!item);
 
     if (next.length !== current.length) return;
+
+    set({ items: next });
+    await persistItems(next);
+  },
+
+  togglePriority: async (symbol) => {
+    const next = get().items.map(item =>
+      item.symbol === symbol
+        ? { ...item, isPriority: !item.isPriority }
+        : item
+    );
 
     set({ items: next });
     await persistItems(next);
