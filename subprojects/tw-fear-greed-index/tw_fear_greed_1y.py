@@ -281,6 +281,17 @@ def parse_twse_count(raw: str) -> int:
     return int(match.group(1).replace(",", ""))
 
 
+def load_response_json(response: requests.Response, source: str) -> dict[str, Any]:
+    text = response.text.strip()
+    if not text:
+        raise RuntimeError(f"{source} returned an empty response body.")
+    try:
+        return response.json()
+    except requests.exceptions.JSONDecodeError as exc:
+        snippet = text[:160].replace("\n", " ")
+        raise RuntimeError(f"{source} returned non-JSON content: {snippet}") from exc
+
+
 def fetch_twse_breadth(public_session: requests.Session, day: pd.Timestamp) -> dict[str, Any]:
     params = {
         "response": "json",
@@ -294,7 +305,7 @@ def fetch_twse_breadth(public_session: requests.Session, day: pd.Timestamp) -> d
         try:
             response = public_session.get(TWSE_MI_INDEX_URL, params=params, timeout=TIMEOUT, verify=False)
             response.raise_for_status()
-            payload = response.json()
+            payload = load_response_json(response, f"TWSE {day:%Y-%m-%d}")
 
             tables = payload.get("tables", [])
             candidate_tables = []
@@ -386,6 +397,8 @@ def fetch_tpex_breadth(public_session: requests.Session, day: pd.Timestamp) -> d
 def fetch_breadth(public_session: requests.Session, trading_days: list[pd.Timestamp], cache_dir: Path) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     total = len(trading_days)
+    previous_twse_payload: dict[str, Any] | None = None
+    previous_tpex_payload: dict[str, Any] | None = None
 
     for idx, day in enumerate(trading_days, start=1):
         twse_path = cache_json_path(cache_dir, "breadth_twse", day)
@@ -393,15 +406,39 @@ def fetch_breadth(public_session: requests.Session, trading_days: list[pd.Timest
 
         twse_payload = load_cached_json(twse_path)
         if twse_payload is None:
-            twse_payload = fetch_twse_breadth(public_session, day)
-            save_cached_json(twse_path, twse_payload)
-            time.sleep(0.2)
+            try:
+                twse_payload = fetch_twse_breadth(public_session, day)
+                save_cached_json(twse_path, twse_payload)
+                time.sleep(0.2)
+            except Exception as exc:  # noqa: BLE001
+                if previous_twse_payload is None:
+                    raise
+                print(f"[breadth-warning] TWSE fallback for {day:%Y-%m-%d}: {exc}", flush=True)
+                twse_payload = {
+                    "date": day.strftime("%Y-%m-%d"),
+                    "advance": previous_twse_payload["advance"],
+                    "decline": previous_twse_payload["decline"],
+                    "unchanged": previous_twse_payload["unchanged"],
+                }
+                save_cached_json(twse_path, twse_payload)
 
         tpex_payload = load_cached_json(tpex_path)
         if tpex_payload is None:
-            tpex_payload = fetch_tpex_breadth(public_session, day)
-            save_cached_json(tpex_path, tpex_payload)
-            time.sleep(0.1)
+            try:
+                tpex_payload = fetch_tpex_breadth(public_session, day)
+                save_cached_json(tpex_path, tpex_payload)
+                time.sleep(0.1)
+            except Exception as exc:  # noqa: BLE001
+                if previous_tpex_payload is None:
+                    raise
+                print(f"[breadth-warning] TPEx fallback for {day:%Y-%m-%d}: {exc}", flush=True)
+                tpex_payload = {
+                    "date": day.strftime("%Y-%m-%d"),
+                    "advance": previous_tpex_payload["advance"],
+                    "decline": previous_tpex_payload["decline"],
+                    "unchanged": previous_tpex_payload["unchanged"],
+                }
+                save_cached_json(tpex_path, tpex_payload)
 
         advance_total = int(twse_payload["advance"]) + int(tpex_payload["advance"])
         decline_total = int(twse_payload["decline"]) + int(tpex_payload["decline"])
@@ -427,6 +464,9 @@ def fetch_breadth(public_session: requests.Session, trading_days: list[pd.Timest
 
         if idx == 1 or idx == total or idx % 25 == 0:
             print(f"[breadth] {idx}/{total} {day:%Y-%m-%d}", flush=True)
+
+        previous_twse_payload = twse_payload
+        previous_tpex_payload = tpex_payload
 
     df = pd.DataFrame(rows)
     df["date"] = pd.to_datetime(df["date"])
