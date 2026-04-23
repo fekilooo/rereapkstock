@@ -1,0 +1,66 @@
+name: TW Fear Greed Pages
+
+on:
+  workflow_dispatch:
+    inputs:
+      end_date:
+        description: "Optional end date in YYYY-MM-DD"
+        required: false
+        type: string
+  schedule:
+    - cron: "10 14 * * 1-5"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: tw-fear-greed-pages
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+          cache-dependency-path: subprojects/tw-fear-greed-index/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r subprojects/tw-fear-greed-index/requirements.txt
+
+      - name: Generate output
+        shell: bash
+        env:
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          INPUT_END_DATE: ${{ github.event.inputs.end_date }}
+        run: |
+          set -euo pipefail
+          ARGS=()
+          if [ -n "${INPUT_END_DATE:-}" ]; then
+            ARGS+=(--end-date "$INPUT_END_DATE")
+          fi
+          python subprojects/tw-fear-greed-index/tw_fear_greed_1y.py "${ARGS[@]}"
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: subprojects/tw-fear-greed-index/output
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
