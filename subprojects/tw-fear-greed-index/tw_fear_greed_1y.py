@@ -287,7 +287,7 @@ def load_response_json(response: requests.Response, source: str) -> dict[str, An
         raise RuntimeError(f"{source} returned an empty response body.")
     try:
         return response.json()
-    except requests.exceptions.JSONDecodeError as exc:
+    except Exception as exc:  # noqa: BLE001
         snippet = text[:160].replace("\n", " ")
         raise RuntimeError(f"{source} returned non-JSON content: {snippet}") from exc
 
