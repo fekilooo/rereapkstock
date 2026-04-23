@@ -42,3 +42,7 @@ yarn-error.*
 # tw fear & greed generated data
 /subprojects/tw-fear-greed-index/cache/
 /subprojects/tw-fear-greed-index/output/
+<<<<<<< HEAD
+=======
+/subprojects/tw-fear-greed-index/__pycache__/
+>>>>>>> 73adc10 (Add Taiwan fear greed automation and market cards)

@@ -17,11 +17,11 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen
           name="stock/[symbol]"
-          options={{ title: '股票詳情', headerBackTitle: '返回' }}
+          options={{ title: 'Stock Detail', headerBackTitle: 'Back' }}
         />
         <Stack.Screen
           name="feargreed"
-          options={{ title: '恐慌貪婪指數｜歷史走勢', headerBackTitle: '返回' }}
+          options={{ title: 'Market Sentiment', headerBackTitle: 'Back' }}
         />
       </Stack>
     </GestureHandlerRootView>

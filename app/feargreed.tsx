@@ -11,9 +11,10 @@ import {
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import Svg, { Circle, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
-import { fetchOHLCV, fetchQuote } from '../src/api/yahoo';
+import { FearGreedHistory, fetchFearGreed, ratingColor } from '../src/api/cnn';
+import { fetchTwFearGreedHistory } from '../src/api/twFearGreed';
 import { fetchTwseRealtime } from '../src/api/twse';
-import { ratingColor } from '../src/api/cnn';
+import { fetchOHLCV, fetchQuote } from '../src/api/yahoo';
 
 type FearGreedPoint = {
   date: number;
@@ -30,6 +31,8 @@ type CompareStock = {
   symbol: string;
   series: StockPoint[];
 };
+
+type MarketKey = 'us' | 'tw';
 
 const FG_HEIGHT = 220;
 const STOCK_HEIGHT = 220;
@@ -92,14 +95,14 @@ function buildPath(
   xForTime: (timestamp: number) => number,
   yForValue: (value: number) => number
 ): string {
-  let d = '';
+  let path = '';
   for (let i = 0; i < points.length; i += 1) {
     const point = points[i];
     const x = xForTime(point.date).toFixed(1);
     const y = yForValue(point.value).toFixed(1);
-    d += i === 0 ? `M${x},${y}` : ` L${x},${y}`;
+    path += i === 0 ? `M${x},${y}` : ` L${x},${y}`;
   }
-  return d;
+  return path;
 }
 
 function findNearestPointIndex(points: Array<{ date: number }>, timestamp: number): number {
@@ -126,8 +129,7 @@ function findLatestPointAtOrBefore(points: StockPoint[], timestamp: number): num
       break;
     }
   }
-  if (bestIndex >= 0) return bestIndex;
-  return 0;
+  return bestIndex >= 0 ? bestIndex : 0;
 }
 
 function buildAxisTicks(start: number, end: number, count: number) {
@@ -145,6 +147,10 @@ function fearGreedLabel(score: number): string {
   if (score <= 55) return '中性';
   if (score <= 74) return '貪婪';
   return '極度貪婪';
+}
+
+function firstParam(value?: string | string[]) {
+  return Array.isArray(value) ? value[0] : value;
 }
 
 function TouchOverlay({
@@ -185,7 +191,7 @@ function FearGreedPanel({
   const chartW = width - CHART_PAD.left - CHART_PAD.right;
   const chartH = height - CHART_PAD.top - CHART_PAD.bottom;
   const yForValue = (value: number) => CHART_PAD.top + chartH - (value / 100) * chartH;
-  const fgPath = useMemo(
+  const fearGreedPath = useMemo(
     () => buildPath(history.map(point => ({ date: point.date, value: point.score })), xForTime, yForValue),
     [history, xForTime]
   );
@@ -194,61 +200,61 @@ function FearGreedPanel({
   const yTicks = [0, 25, 50, 75, 100];
 
   return (
-    <Svg width={width} height={height}>
-      <Rect x={0} y={0} width={width} height={height} fill="#11161d" />
-      <Rect x={CHART_PAD.left} y={CHART_PAD.top} width={chartW} height={chartH} fill="#0f141a" />
+    <Svg height={height} width={width}>
+      <Rect fill="#11161d" height={height} width={width} x={0} y={0} />
+      <Rect fill="#0f141a" height={chartH} width={chartW} x={CHART_PAD.left} y={CHART_PAD.top} />
 
-      <Rect x={CHART_PAD.left} y={yForValue(25)} width={chartW} height={yForValue(0) - yForValue(25)} fill="rgba(239,83,80,0.10)" />
-      <Rect x={CHART_PAD.left} y={yForValue(45)} width={chartW} height={yForValue(25) - yForValue(45)} fill="rgba(255,183,77,0.08)" />
-      <Rect x={CHART_PAD.left} y={yForValue(55)} width={chartW} height={yForValue(45) - yForValue(55)} fill="rgba(144,202,249,0.08)" />
-      <Rect x={CHART_PAD.left} y={yForValue(75)} width={chartW} height={yForValue(55) - yForValue(75)} fill="rgba(165,214,167,0.08)" />
-      <Rect x={CHART_PAD.left} y={yForValue(100)} width={chartW} height={yForValue(75) - yForValue(100)} fill="rgba(67,160,71,0.10)" />
+      <Rect fill="rgba(239,83,80,0.10)" height={yForValue(0) - yForValue(25)} width={chartW} x={CHART_PAD.left} y={yForValue(25)} />
+      <Rect fill="rgba(255,183,77,0.08)" height={yForValue(25) - yForValue(45)} width={chartW} x={CHART_PAD.left} y={yForValue(45)} />
+      <Rect fill="rgba(144,202,249,0.08)" height={yForValue(45) - yForValue(55)} width={chartW} x={CHART_PAD.left} y={yForValue(55)} />
+      <Rect fill="rgba(165,214,167,0.08)" height={yForValue(55) - yForValue(75)} width={chartW} x={CHART_PAD.left} y={yForValue(75)} />
+      <Rect fill="rgba(67,160,71,0.10)" height={yForValue(75) - yForValue(100)} width={chartW} x={CHART_PAD.left} y={yForValue(100)} />
 
       {yTicks.map(value => (
         <React.Fragment key={value}>
           <Line
-            x1={CHART_PAD.left}
-            y1={yForValue(value)}
-            x2={width - CHART_PAD.right}
-            y2={yForValue(value)}
             stroke={value === 25 || value === 75 ? 'rgba(255,255,255,0.14)' : '#27313b'}
-            strokeWidth={1}
             strokeDasharray={value === 25 || value === 75 ? '4,3' : undefined}
+            strokeWidth={1}
+            x1={CHART_PAD.left}
+            x2={width - CHART_PAD.right}
+            y1={yForValue(value)}
+            y2={yForValue(value)}
           />
           <SvgText
-            x={CHART_PAD.left - 6}
-            y={yForValue(value) + 4}
             fill="#8b949e"
             fontSize={10}
             textAnchor="end"
+            x={CHART_PAD.left - 6}
+            y={yForValue(value) + 4}
           >
             {value}
           </SvgText>
         </React.Fragment>
       ))}
 
-      <SvgText x={CHART_PAD.left} y={14} fill="#c9d1d9" fontSize={12} fontWeight="700">
-        恐慌貪婪指數
+      <SvgText fill="#c9d1d9" fontSize={12} fontWeight="700" x={CHART_PAD.left} y={14}>
+        Fear &amp; Greed
       </SvgText>
 
-      {fgPath ? <Path d={fgPath} stroke="#79c0ff" strokeWidth={2.2} fill="none" /> : null}
+      {fearGreedPath ? <Path d={fearGreedPath} fill="none" stroke="#79c0ff" strokeWidth={2.2} /> : null}
 
       <Line
-        x1={xForTime(activeTime)}
-        y1={CHART_PAD.top}
-        x2={xForTime(activeTime)}
-        y2={CHART_PAD.top + chartH}
         stroke="#d0d7de"
-        strokeWidth={1}
         strokeDasharray="4,3"
+        strokeWidth={1}
+        x1={xForTime(activeTime)}
+        x2={xForTime(activeTime)}
+        y1={CHART_PAD.top}
+        y2={CHART_PAD.top + chartH}
       />
 
       {activePoint ? (
         <Circle
           cx={xForTime(activePoint.date)}
           cy={yForValue(activePoint.score)}
-          r={4.5}
           fill="#79c0ff"
+          r={4.5}
           stroke="#0d1117"
           strokeWidth={2}
         />
@@ -258,11 +264,11 @@ function FearGreedPanel({
         ? ticks.map((tick, index) => (
             <SvgText
               key={`${tick.time}-${index}`}
-              x={xForTime(tick.time)}
-              y={height - 8}
               fill="#8b949e"
               fontSize={10}
               textAnchor={index === 0 ? 'start' : index === ticks.length - 1 ? 'end' : 'middle'}
+              x={xForTime(tick.time)}
+              y={height - 8}
             >
               {tick.label}
             </SvgText>
@@ -312,40 +318,38 @@ function StockPanel({
 
   const activeIndex = stock ? findLatestPointAtOrBefore(stock.series, activeTime) : -1;
   const activePoint = activeIndex >= 0 && stock ? stock.series[activeIndex] : null;
-  const yTicks = stock
-    ? Array.from({ length: 4 }, (_, index) => minY + ((maxY - minY) * index) / 3)
-    : [];
+  const yTicks = stock ? Array.from({ length: 4 }, (_, index) => minY + ((maxY - minY) * index) / 3) : [];
 
   const latest = stock?.series.at(-1)?.close ?? null;
   const previous = stock && stock.series.length > 1 ? stock.series[stock.series.length - 2].close : null;
   const lineColor = valueTone(latest, previous);
 
   return (
-    <Svg width={width} height={height}>
-      <Rect x={0} y={0} width={width} height={height} fill="#11161d" />
-      <Rect x={CHART_PAD.left} y={CHART_PAD.top} width={chartW} height={chartH} fill="#0f141a" />
+    <Svg height={height} width={width}>
+      <Rect fill="#11161d" height={height} width={width} x={0} y={0} />
+      <Rect fill="#0f141a" height={chartH} width={chartW} x={CHART_PAD.left} y={CHART_PAD.top} />
 
-      <SvgText x={CHART_PAD.left} y={14} fill="#c9d1d9" fontSize={12} fontWeight="700">
-        {stock ? `股價比較｜${displaySymbol(stock.symbol)} ${stock.name}` : '股價比較｜請輸入股票代碼'}
+      <SvgText fill="#c9d1d9" fontSize={12} fontWeight="700" x={CHART_PAD.left} y={14}>
+        {stock ? `Compare ${displaySymbol(stock.symbol)} ${stock.name}` : 'Add a stock to compare'}
       </SvgText>
 
       {stock
         ? yTicks.map((value, index) => (
             <React.Fragment key={`stock-grid-${index}`}>
               <Line
-                x1={CHART_PAD.left}
-                y1={yForValue(value)}
-                x2={width - CHART_PAD.right}
-                y2={yForValue(value)}
                 stroke="#27313b"
                 strokeWidth={1}
+                x1={CHART_PAD.left}
+                x2={width - CHART_PAD.right}
+                y1={yForValue(value)}
+                y2={yForValue(value)}
               />
               <SvgText
-                x={width - CHART_PAD.right + 4}
-                y={yForValue(value) + 4}
                 fill="#8b949e"
                 fontSize={10}
                 textAnchor="start"
+                x={width - CHART_PAD.right + 4}
+                y={yForValue(value) + 4}
               >
                 {value >= 1000 ? `${(value / 1000).toFixed(1)}k` : value.toFixed(2)}
               </SvgText>
@@ -353,17 +357,17 @@ function StockPanel({
           ))
         : null}
 
-      {stock && seriesPath ? <Path d={seriesPath} stroke={lineColor} strokeWidth={2.2} fill="none" /> : null}
+      {stock && seriesPath ? <Path d={seriesPath} fill="none" stroke={lineColor} strokeWidth={2.2} /> : null}
 
       {stock ? (
         <Line
-          x1={xForTime(activeTime)}
-          y1={CHART_PAD.top}
-          x2={xForTime(activeTime)}
-          y2={CHART_PAD.top + chartH}
           stroke="#d0d7de"
-          strokeWidth={1}
           strokeDasharray="4,3"
+          strokeWidth={1}
+          x1={xForTime(activeTime)}
+          x2={xForTime(activeTime)}
+          y1={CHART_PAD.top}
+          y2={CHART_PAD.top + chartH}
         />
       ) : null}
 
@@ -371,8 +375,8 @@ function StockPanel({
         <Circle
           cx={xForTime(activePoint.date)}
           cy={yForValue(activePoint.close)}
-          r={4.5}
           fill={lineColor}
+          r={4.5}
           stroke="#0d1117"
           strokeWidth={2}
         />
@@ -380,13 +384,13 @@ function StockPanel({
 
       {!stock ? (
         <SvgText
-          x={width / 2}
-          y={height / 2}
           fill="#8b949e"
           fontSize={13}
           textAnchor="middle"
+          x={width / 2}
+          y={height / 2}
         >
-          輸入 2330、QQQ、AAPL 後即可和市場情緒同步比較
+          輸入 2330 / 0050 / QQQ / AAPL 即可疊加價格走勢
         </SvgText>
       ) : null}
 
@@ -394,11 +398,11 @@ function StockPanel({
         ? ticks.map((tick, index) => (
             <SvgText
               key={`stock-axis-${tick.time}-${index}`}
-              x={xForTime(tick.time)}
-              y={height - 8}
               fill="#8b949e"
               fontSize={10}
               textAnchor={index === 0 ? 'start' : index === ticks.length - 1 ? 'end' : 'middle'}
+              x={xForTime(tick.time)}
+              y={height - 8}
             >
               {tick.label}
             </SvgText>
@@ -409,12 +413,13 @@ function StockPanel({
 }
 
 export default function FearGreedHistoryScreen() {
-  const params = useLocalSearchParams<{ historyJson?: string }>();
+  const params = useLocalSearchParams<{ historyJson?: string | string[]; market?: string | string[] }>();
   const { width: screenWidth } = useWindowDimensions();
+  const market: MarketKey = firstParam(params.market) === 'tw' ? 'tw' : 'us';
 
-  const history = useMemo<FearGreedPoint[]>(() => {
+  const fallbackHistory = useMemo<FearGreedPoint[]>(() => {
     try {
-      const parsed = JSON.parse(params.historyJson ?? '[]') as FearGreedPoint[];
+      const parsed = JSON.parse(firstParam(params.historyJson) ?? '[]') as FearGreedPoint[];
       return parsed
         .filter(point => Number.isFinite(point?.date) && Number.isFinite(point?.score))
         .sort((a, b) => a.date - b.date);
@@ -423,6 +428,9 @@ export default function FearGreedHistoryScreen() {
     }
   }, [params.historyJson]);
 
+  const [history, setHistory] = useState<FearGreedPoint[]>(fallbackHistory);
+  const [historyLoading, setHistoryLoading] = useState(fallbackHistory.length === 0);
+  const [historyError, setHistoryError] = useState('');
   const [symbolInput, setSymbolInput] = useState('');
   const [compareStock, setCompareStock] = useState<CompareStock | null>(null);
   const [loading, setLoading] = useState(false);
@@ -430,10 +438,61 @@ export default function FearGreedHistoryScreen() {
   const [selectedTime, setSelectedTime] = useState<number | null>(null);
 
   useEffect(() => {
-    if (history.length > 0 && selectedTime == null) {
+    let cancelled = false;
+
+    async function loadHistory() {
+      if (fallbackHistory.length > 0) {
+        setHistory(fallbackHistory);
+        setHistoryLoading(false);
+        setHistoryError('');
+        return;
+      }
+
+      setHistoryLoading(true);
+      setHistoryError('');
+
+      try {
+        const nextHistory =
+          market === 'tw'
+            ? await fetchTwFearGreedHistory()
+            : (await fetchFearGreed()).history.map((point: FearGreedHistory) => ({
+                date: point.date,
+                score: point.score,
+              }));
+
+        if (!cancelled) {
+          setHistory(nextHistory);
+        }
+      } catch (error: any) {
+        if (!cancelled) {
+          setHistory([]);
+          setHistoryError(error?.message ?? String(error));
+        }
+      } finally {
+        if (!cancelled) {
+          setHistoryLoading(false);
+        }
+      }
+    }
+
+    void loadHistory();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fallbackHistory, market]);
+
+  useEffect(() => {
+    if (history.length > 0) {
       setSelectedTime(history[history.length - 1].date);
     }
-  }, [history, selectedTime]);
+  }, [history, market]);
+
+  useEffect(() => {
+    setCompareStock(null);
+    setLoadError('');
+    setSymbolInput('');
+  }, [market]);
 
   const rangeStart = history[0]?.date ?? Date.now() - 365 * 24 * 60 * 60 * 1000;
   const rangeEnd = history[history.length - 1]?.date ?? Date.now();
@@ -462,10 +521,16 @@ export default function FearGreedHistoryScreen() {
       ? ((currentStock.close - previousStock.close) / previousStock.close) * 100
       : null;
 
+  const marketTitle = market === 'tw' ? '台股市場情緒' : '美股市場情緒';
+  const marketSubtitle =
+    market === 'tw'
+      ? '台股版本使用每日預先計算資料，點圖可拖曳查看一年歷史，並可和任一股票或 ETF 疊圖對照。'
+      : '美股版本使用 CNN Fear & Greed 一年期資料，點圖可拖曳查看歷史，並可和任一股票或 ETF 疊圖對照。';
+
   async function loadCompareStock() {
     const normalized = normalizeSymbol(symbolInput);
     if (!normalized) {
-      setLoadError('請先輸入股票代碼');
+      setLoadError('請先輸入股票代碼。');
       return;
     }
 
@@ -484,7 +549,7 @@ export default function FearGreedHistoryScreen() {
         .map(point => ({ close: point.close, date: point.date }));
 
       if (!series.length) {
-        throw new Error('找不到這段期間的股價資料');
+        throw new Error('這段期間找不到可比較的股價資料。');
       }
 
       const name =
@@ -511,104 +576,119 @@ export default function FearGreedHistoryScreen() {
   const chartAreaHeight = FG_HEIGHT + CHART_GAP + STOCK_HEIGHT;
 
   return (
-    <ScrollView style={styles.bg} contentContainerStyle={styles.content}>
+    <ScrollView contentContainerStyle={styles.content} style={styles.bg}>
       <View style={styles.headerCard}>
-        <Text style={styles.title}>恐慌貪婪指數｜同步比較</Text>
-        <Text style={styles.subtitle}>
-          上方看市場情緒，下方可加入一檔股票，同步比對相同時間段的股價表現。
-        </Text>
+        <Text style={styles.title}>{marketTitle}</Text>
+        <Text style={styles.subtitle}>{marketSubtitle}</Text>
       </View>
 
-      <View style={styles.inputCard}>
-        <Text style={styles.inputLabel}>比較股票</Text>
-        <View style={styles.inputRow}>
-          <TextInput
-            autoCapitalize="characters"
-            autoCorrect={false}
-            placeholder="輸入 2330 / QQQ / AAPL"
-            placeholderTextColor="#6e7681"
-            returnKeyType="search"
-            style={styles.input}
-            value={symbolInput}
-            onChangeText={setSymbolInput}
-            onSubmitEditing={() => void loadCompareStock()}
-          />
-          <TouchableOpacity style={styles.primaryButton} onPress={() => void loadCompareStock()}>
-            {loading ? <ActivityIndicator color="#ffffff" size="small" /> : <Text style={styles.primaryButtonText}>載入</Text>}
-          </TouchableOpacity>
-          {compareStock ? (
-            <TouchableOpacity style={styles.secondaryButton} onPress={clearCompareStock}>
-              <Text style={styles.secondaryButtonText}>清除</Text>
-            </TouchableOpacity>
-          ) : null}
+      {historyLoading ? (
+        <View style={styles.loadingCard}>
+          <ActivityIndicator color="#58a6ff" />
+          <Text style={styles.loadingText}>正在載入歷史資料...</Text>
         </View>
-        {loadError ? <Text style={styles.errorText}>{loadError}</Text> : null}
-      </View>
+      ) : null}
 
-      <View style={styles.chartCard}>
-        <View style={[styles.chartArea, { height: chartAreaHeight }]}>
-          <FearGreedPanel
-            activeTime={activeTime}
-            height={FG_HEIGHT}
-            history={history}
-            showXAxis={false}
-            ticks={axisTicks}
-            width={chartWidth}
-            xForTime={xForTime}
-          />
-
-          <View style={styles.chartDivider} />
-
-          <StockPanel
-            activeTime={activeTime}
-            height={STOCK_HEIGHT}
-            showXAxis
-            stock={compareStock}
-            ticks={axisTicks}
-            width={chartWidth}
-            xForTime={xForTime}
-          />
-
-          <TouchOverlay
-            height={chartAreaHeight}
-            onTouch={x => {
-              const plotX = clamp(x, CHART_PAD.left, CHART_PAD.left + plotWidth);
-              const ratio = plotWidth > 0 ? (plotX - CHART_PAD.left) / plotWidth : 0;
-              setSelectedTime(rangeStart + (rangeEnd - rangeStart) * ratio);
-            }}
-          />
+      {!historyLoading && historyError ? (
+        <View style={styles.loadingCard}>
+          <Text style={styles.errorText}>{historyError}</Text>
         </View>
-      </View>
+      ) : null}
 
-      <View style={styles.infoGrid}>
-        <View style={styles.infoCard}>
-          <Text style={styles.infoCardTitle}>市場情緒</Text>
-          <Text style={styles.infoDate}>{currentFearGreed ? formatDate(currentFearGreed.date) : '--'}</Text>
-          <Text style={[styles.bigValue, { color: currentFearGreed ? ratingColor(currentFearGreed.score) : '#e6edf3' }]}>
-            {currentFearGreed?.score ?? '--'}
-          </Text>
-          <Text style={styles.infoLabel}>{currentFearGreed ? fearGreedLabel(currentFearGreed.score) : '--'}</Text>
-          <Text style={[styles.infoSubValue, { color: valueTone(currentFearGreed?.score ?? null, previousFearGreed?.score ?? null) }]}>
-            日變化 {formatSignedPrice(currentFearGreed != null && previousFearGreed != null ? currentFearGreed.score - previousFearGreed.score : null)}
-          </Text>
-        </View>
+      {!historyLoading && history.length > 0 ? (
+        <>
+          <View style={styles.inputCard}>
+            <Text style={styles.inputLabel}>Compare stock / ETF</Text>
+            <View style={styles.inputRow}>
+              <TextInput
+                autoCapitalize="characters"
+                autoCorrect={false}
+                onChangeText={setSymbolInput}
+                onSubmitEditing={() => void loadCompareStock()}
+                placeholder="輸入 2330 / 0050 / QQQ / AAPL"
+                placeholderTextColor="#6e7681"
+                returnKeyType="search"
+                style={styles.input}
+                value={symbolInput}
+              />
+              <TouchableOpacity onPress={() => void loadCompareStock()} style={styles.primaryButton}>
+                {loading ? <ActivityIndicator color="#ffffff" size="small" /> : <Text style={styles.primaryButtonText}>載入</Text>}
+              </TouchableOpacity>
+              {compareStock ? (
+                <TouchableOpacity onPress={clearCompareStock} style={styles.secondaryButton}>
+                  <Text style={styles.secondaryButtonText}>清除</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+            {loadError ? <Text style={styles.errorText}>{loadError}</Text> : null}
+          </View>
 
-        <View style={styles.infoCard}>
-          <Text style={styles.infoCardTitle}>股票比較</Text>
-          <Text style={styles.infoDate}>
-            {compareStock && currentStock ? `${displaySymbol(compareStock.symbol)}｜${formatDate(currentStock.date)}` : '尚未載入股票'}
-          </Text>
-          <Text style={styles.bigValue}>{currentStock ? formatPrice(currentStock.close) : '--'}</Text>
-          <Text style={styles.infoLabel}>
-            {compareStock ? `${displaySymbol(compareStock.symbol)} ${compareStock.name}` : '輸入股票代碼後開始比較'}
-          </Text>
-          <Text style={[styles.infoSubValue, { color: valueTone(stockChange, 0) }]}>
-            {currentStock && stockChange != null && stockChangePct != null
-              ? `${formatSignedPrice(stockChange)} (${stockChangePct >= 0 ? '+' : ''}${stockChangePct.toFixed(2)}%)`
-              : '--'}
-          </Text>
-        </View>
-      </View>
+          <View style={styles.chartCard}>
+            <View style={[styles.chartArea, { height: chartAreaHeight }]}>
+              <FearGreedPanel
+                activeTime={activeTime}
+                height={FG_HEIGHT}
+                history={history}
+                showXAxis={false}
+                ticks={axisTicks}
+                width={chartWidth}
+                xForTime={xForTime}
+              />
+
+              <View style={styles.chartDivider} />
+
+              <StockPanel
+                activeTime={activeTime}
+                height={STOCK_HEIGHT}
+                showXAxis
+                stock={compareStock}
+                ticks={axisTicks}
+                width={chartWidth}
+                xForTime={xForTime}
+              />
+
+              <TouchOverlay
+                height={chartAreaHeight}
+                onTouch={x => {
+                  const plotX = clamp(x, CHART_PAD.left, CHART_PAD.left + plotWidth);
+                  const ratio = plotWidth > 0 ? (plotX - CHART_PAD.left) / plotWidth : 0;
+                  setSelectedTime(rangeStart + (rangeEnd - rangeStart) * ratio);
+                }}
+              />
+            </View>
+          </View>
+
+          <View style={styles.infoGrid}>
+            <View style={styles.infoCard}>
+              <Text style={styles.infoCardTitle}>{market === 'tw' ? '台股情緒' : '美股情緒'}</Text>
+              <Text style={styles.infoDate}>{currentFearGreed ? formatDate(currentFearGreed.date) : '--'}</Text>
+              <Text style={[styles.bigValue, { color: currentFearGreed ? ratingColor(currentFearGreed.score) : '#e6edf3' }]}>
+                {currentFearGreed?.score ?? '--'}
+              </Text>
+              <Text style={styles.infoLabel}>{currentFearGreed ? fearGreedLabel(currentFearGreed.score) : '--'}</Text>
+              <Text style={[styles.infoSubValue, { color: valueTone(currentFearGreed?.score ?? null, previousFearGreed?.score ?? null) }]}>
+                日變化 {formatSignedPrice(currentFearGreed != null && previousFearGreed != null ? currentFearGreed.score - previousFearGreed.score : null)}
+              </Text>
+            </View>
+
+            <View style={styles.infoCard}>
+              <Text style={styles.infoCardTitle}>Compare price</Text>
+              <Text style={styles.infoDate}>
+                {compareStock && currentStock ? `${displaySymbol(compareStock.symbol)} / ${formatDate(currentStock.date)}` : '尚未選擇比較標的'}
+              </Text>
+              <Text style={styles.bigValue}>{currentStock ? formatPrice(currentStock.close) : '--'}</Text>
+              <Text style={styles.infoLabel}>
+                {compareStock ? `${displaySymbol(compareStock.symbol)} ${compareStock.name}` : '輸入股票或 ETF 後即可顯示'}
+              </Text>
+              <Text style={[styles.infoSubValue, { color: valueTone(stockChange, 0) }]}>
+                {currentStock && stockChange != null && stockChangePct != null
+                  ? `${formatSignedPrice(stockChange)} (${stockChangePct >= 0 ? '+' : ''}${stockChangePct.toFixed(2)}%)`
+                  : '--'}
+              </Text>
+            </View>
+          </View>
+        </>
+      ) : null}
     </ScrollView>
   );
 }
@@ -641,6 +721,18 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 14,
     gap: 10,
+  },
+  loadingCard: {
+    backgroundColor: '#161b22',
+    borderRadius: 14,
+    padding: 18,
+    gap: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingText: {
+    color: '#8b949e',
+    fontSize: 13,
   },
   inputLabel: {
     color: '#c9d1d9',
@@ -693,6 +785,7 @@ const styles = StyleSheet.create({
   errorText: {
     color: '#ff7b72',
     fontSize: 12,
+    textAlign: 'center',
   },
   chartCard: {
     backgroundColor: '#161b22',
