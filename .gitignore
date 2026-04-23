@@ -38,3 +38,7 @@ yarn-error.*
 
 # generated native folders
 /ios
+
+# tw fear & greed generated data
+/subprojects/tw-fear-greed-index/cache/
+/subprojects/tw-fear-greed-index/output/
