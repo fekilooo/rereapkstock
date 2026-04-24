@@ -30,6 +30,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Restore TW Fear Greed cache
+        id: data-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            subprojects/tw-fear-greed-index/cache
+            subprojects/tw-fear-greed-index/output
+          key: tw-fear-greed-data-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            tw-fear-greed-data-${{ runner.os }}-${{ github.ref_name }}-
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -52,6 +63,15 @@ jobs:
             ARGS+=(--end-date "$INPUT_END_DATE")
           fi
           python subprojects/tw-fear-greed-index/tw_fear_greed_1y.py "${ARGS[@]}"
+
+      - name: Save TW Fear Greed cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            subprojects/tw-fear-greed-index/cache
+            subprojects/tw-fear-greed-index/output
+          key: ${{ steps.data-cache.outputs.cache-primary-key }}
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
