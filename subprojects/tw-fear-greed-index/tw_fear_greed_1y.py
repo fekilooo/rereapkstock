@@ -46,12 +46,12 @@ class IndicatorSpec:
 
 
 INDICATORS = [
-    IndicatorSpec("撣?", "momentum_metric", "momentum_score", 0.25),
-    IndicatorSpec("撣撱?漲", "breadth_metric", "breadth_score", 0.20),
-    IndicatorSpec("????", "margin_metric", "margin_score", 0.15),
-    IndicatorSpec("憭???", "foreign_metric", "foreign_score", 0.15),
+    IndicatorSpec("市場動能", "momentum_metric", "momentum_score", 0.25),
+    IndicatorSpec("市場廣度", "breadth_metric", "breadth_score", 0.20),
+    IndicatorSpec("融資情緒", "margin_metric", "margin_score", 0.15),
+    IndicatorSpec("外資情緒", "foreign_metric", "foreign_score", 0.15),
     IndicatorSpec("P/C Ratio", "pc_ratio_metric", "pc_ratio_score", 0.15, invert=True),
-    IndicatorSpec("瘜Ｗ?憸券", "volatility_metric", "volatility_score", 0.10, invert=True),
+    IndicatorSpec("波動風險", "volatility_metric", "volatility_score", 0.10, invert=True),
 ]
 
 HISTORY_CSV_FILENAME = "tw_fear_greed_1y_history.csv"
@@ -216,14 +216,14 @@ def load_existing_history_json_last_date(output_dir: Path) -> pd.Timestamp | Non
 
 def rating_label(score: float) -> str:
     if score <= 24:
-        return "璆萄漲??"
+        return "極度恐慌"
     if score <= 44:
-        return "??"
+        return "恐慌"
     if score <= 55:
-        return "銝剜?
+        return "中性"
     if score <= 74:
-        return "鞎芸帚"
-    return "璆萄漲鞎芸帚"
+        return "貪婪"
+    return "極度貪婪"
 
 
 def rating_label_en(score: float) -> str:
@@ -385,40 +385,40 @@ def fetch_twse_breadth(public_session: requests.Session, day: pd.Timestamp) -> d
             for table in tables:
                 fields = table.get("fields", [])
                 title = str(table.get("title") or "")
-                if title == "瞍脰?霅?詨?閮?:
+                if title == "漲跌證券數合計":
                     candidate_tables.append(table)
-                elif "憿?" in fields and "?∠巨" in fields:
+                elif "類型" in fields and "股票" in fields:
                     candidate_tables.append(table)
 
             for table in candidate_tables:
                 fields = table.get("fields", [])
-                if "?∠巨" not in fields:
+                if "股票" not in fields:
                     continue
-                stock_index = fields.index("?∠巨")
+                stock_index = fields.index("股票")
                 stats: dict[str, int] = {}
                 for row in table.get("data", []):
                     label = str(row[0])
-                    if label.startswith("銝撞"):
+                    if label.startswith("上漲"):
                         stats["advance"] = parse_twse_count(str(row[stock_index]))
-                    elif label.startswith("銝?"):
+                    elif label.startswith("下跌"):
                         stats["decline"] = parse_twse_count(str(row[stock_index]))
-                    elif label.startswith("?像"):
+                    elif label.startswith("持平"):
                         stats["unchanged"] = parse_twse_count(str(row[stock_index]))
                 if {"advance", "decline", "unchanged"} <= stats.keys():
                     return {"date": day.strftime("%Y-%m-%d"), **stats}
 
             legacy_fields = payload.get("fields7")
             legacy_data = payload.get("data7")
-            if legacy_fields and legacy_data and "?∠巨" in legacy_fields:
-                stock_index = legacy_fields.index("?∠巨")
+            if legacy_fields and legacy_data and "股票" in legacy_fields:
+                stock_index = legacy_fields.index("股票")
                 stats = {}
                 for row in legacy_data:
                     label = str(row[0])
-                    if label.startswith("銝撞"):
+                    if label.startswith("上漲"):
                         stats["advance"] = parse_twse_count(str(row[stock_index]))
-                    elif label.startswith("銝?"):
+                    elif label.startswith("下跌"):
                         stats["decline"] = parse_twse_count(str(row[stock_index]))
-                    elif label.startswith("?像"):
+                    elif label.startswith("持平"):
                         stats["unchanged"] = parse_twse_count(str(row[stock_index]))
                 if {"advance", "decline", "unchanged"} <= stats.keys():
                     return {"date": day.strftime("%Y-%m-%d"), **stats}
@@ -455,9 +455,9 @@ def fetch_tpex_breadth(public_session: requests.Session, day: pd.Timestamp) -> d
             html = response.text
             return {
                 "date": day.strftime("%Y-%m-%d"),
-                "advance": parse_tpex_single_value(html, "銝撞摰嗆"),
-                "decline": parse_tpex_single_value(html, "銝?摰嗆"),
-                "unchanged": parse_tpex_single_value(html, "撟喟摰嗆"),
+                "advance": parse_tpex_single_value(html, "上漲家數"),
+                "decline": parse_tpex_single_value(html, "下跌家數"),
+                "unchanged": parse_tpex_single_value(html, "平盤家數"),
             }
         except Exception as exc:  # noqa: BLE001
             last_error = exc
