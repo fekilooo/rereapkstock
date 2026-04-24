@@ -13,8 +13,10 @@ These files are ready:
 The workflow will:
 
 1. install Python dependencies
-2. run the 1-year generator script
-3. publish the generated files to GitHub Pages
+2. restore the last cached output and breadth cache
+3. run the 1-year generator script in incremental mode when possible
+4. save refreshed cache data for the next run
+5. publish the generated files to GitHub Pages
 
 Published files include:
 
@@ -109,14 +111,14 @@ Check the actual Pages URL in the workflow run after the first deploy.
 
 The workflow currently runs:
 
-- every weekday at `14:10 UTC`
-- which is `22:10` in Taiwan time during standard offset
+- every weekday at `09:00 UTC`
+- which is `17:00` in Taiwan time
 
 It also supports manual runs from the Actions page.
 
 ## Notes
 
-- the first run is slower because breadth data cache is built
-- later runs are usually faster
+- the first run after cache reset is slower because the workflow needs to rebuild the recent history window
+- later runs restore the previous output and breadth cache, then only recompute the missing dates plus a small recent tail window
 - GitHub Actions secrets must be created by you in GitHub settings
 - I can prepare the files, but I cannot press the GitHub web UI buttons on your behalf from here
