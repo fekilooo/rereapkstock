@@ -7,6 +7,11 @@ on:
         description: "Optional end date in YYYY-MM-DD"
         required: false
         type: string
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/tw-fear-greed-pages.yml"
   schedule:
     - cron: "0 9 * * 1-5"
 
