@@ -25,6 +25,7 @@ DEFAULT_WARMUP_DAYS = 420
 DEFAULT_PERCENTILE_WINDOW = 252
 DEFAULT_MIN_PERIODS = 60
 DEFAULT_SMOOTHING_SPAN = 5
+DEFAULT_INCREMENTAL_RECOMPUTE_DAYS = 60
 TIMEOUT = 60
 
 USER_AGENT = (
@@ -45,13 +46,16 @@ class IndicatorSpec:
 
 
 INDICATORS = [
-    IndicatorSpec("市場動能", "momentum_metric", "momentum_score", 0.25),
-    IndicatorSpec("市場廣度", "breadth_metric", "breadth_score", 0.20),
-    IndicatorSpec("融資情緒", "margin_metric", "margin_score", 0.15),
-    IndicatorSpec("外資情緒", "foreign_metric", "foreign_score", 0.15),
+    IndicatorSpec("撣?", "momentum_metric", "momentum_score", 0.25),
+    IndicatorSpec("撣撱?漲", "breadth_metric", "breadth_score", 0.20),
+    IndicatorSpec("????", "margin_metric", "margin_score", 0.15),
+    IndicatorSpec("憭???", "foreign_metric", "foreign_score", 0.15),
     IndicatorSpec("P/C Ratio", "pc_ratio_metric", "pc_ratio_score", 0.15, invert=True),
-    IndicatorSpec("波動風險", "volatility_metric", "volatility_score", 0.10, invert=True),
+    IndicatorSpec("瘜Ｗ?憸券", "volatility_metric", "volatility_score", 0.10, invert=True),
 ]
+
+HISTORY_CSV_FILENAME = "tw_fear_greed_1y_history.csv"
+HISTORY_JSON_FILENAME = "tw_fear_greed_1y_history.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -141,16 +145,85 @@ def rolling_percentile(series: pd.Series, window: int, *, invert: bool, min_peri
     return pd.Series(output, index=series.index)
 
 
+def ema_with_seed(series: pd.Series, *, span: int, seed: float | None = None) -> pd.Series:
+    values = pd.to_numeric(series, errors="coerce")
+    alpha = 2.0 / (span + 1.0)
+    previous = None if seed is None or pd.isna(seed) else float(seed)
+    output: list[float] = []
+
+    for value in values:
+        if pd.isna(value):
+            output.append(np.nan)
+            continue
+        numeric_value = float(value)
+        if previous is None:
+            previous = numeric_value
+        else:
+            previous = alpha * numeric_value + (1.0 - alpha) * previous
+        output.append(previous)
+
+    return pd.Series(output, index=series.index)
+
+
+def normalize_history_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    normalized = frame.copy()
+    normalized["date"] = pd.to_datetime(normalized["date"]).dt.normalize()
+    for column in normalized.columns:
+        if column not in {"date", "rating"}:
+            normalized[column] = pd.to_numeric(normalized[column], errors="coerce")
+    return normalized.sort_values("date").drop_duplicates("date", keep="last").reset_index(drop=True)
+
+
+def load_existing_history_frame(output_dir: Path) -> pd.DataFrame | None:
+    history_csv_path = output_dir / HISTORY_CSV_FILENAME
+    if not history_csv_path.exists():
+        return None
+
+    try:
+        frame = pd.read_csv(history_csv_path)
+    except Exception:  # noqa: BLE001
+        return None
+
+    if frame.empty or "date" not in frame.columns:
+        return None
+    return normalize_history_frame(frame)
+
+
+def load_existing_history_json_last_date(output_dir: Path) -> pd.Timestamp | None:
+    history_json_path = output_dir / HISTORY_JSON_FILENAME
+    if not history_json_path.exists():
+        return None
+
+    try:
+        with history_json_path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception:  # noqa: BLE001
+        return None
+
+    history = payload.get("history")
+    if not isinstance(history, list) or not history:
+        return None
+
+    last_date = history[-1].get("date")
+    if not last_date:
+        return None
+
+    try:
+        return pd.Timestamp(last_date).normalize()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def rating_label(score: float) -> str:
     if score <= 24:
-        return "極度恐慌"
+        return "璆萄漲??"
     if score <= 44:
-        return "恐慌"
+        return "??"
     if score <= 55:
-        return "中性"
+        return "銝剜?
     if score <= 74:
-        return "貪婪"
-    return "極度貪婪"
+        return "鞎芸帚"
+    return "璆萄漲鞎芸帚"
 
 
 def rating_label_en(score: float) -> str:
@@ -312,40 +385,40 @@ def fetch_twse_breadth(public_session: requests.Session, day: pd.Timestamp) -> d
             for table in tables:
                 fields = table.get("fields", [])
                 title = str(table.get("title") or "")
-                if title == "漲跌證券數合計":
+                if title == "瞍脰?霅?詨?閮?:
                     candidate_tables.append(table)
-                elif "類型" in fields and "股票" in fields:
+                elif "憿?" in fields and "?∠巨" in fields:
                     candidate_tables.append(table)
 
             for table in candidate_tables:
                 fields = table.get("fields", [])
-                if "股票" not in fields:
+                if "?∠巨" not in fields:
                     continue
-                stock_index = fields.index("股票")
+                stock_index = fields.index("?∠巨")
                 stats: dict[str, int] = {}
                 for row in table.get("data", []):
                     label = str(row[0])
-                    if label.startswith("上漲"):
+                    if label.startswith("銝撞"):
                         stats["advance"] = parse_twse_count(str(row[stock_index]))
-                    elif label.startswith("下跌"):
+                    elif label.startswith("銝?"):
                         stats["decline"] = parse_twse_count(str(row[stock_index]))
-                    elif label.startswith("持平"):
+                    elif label.startswith("?像"):
                         stats["unchanged"] = parse_twse_count(str(row[stock_index]))
                 if {"advance", "decline", "unchanged"} <= stats.keys():
                     return {"date": day.strftime("%Y-%m-%d"), **stats}
 
             legacy_fields = payload.get("fields7")
             legacy_data = payload.get("data7")
-            if legacy_fields and legacy_data and "股票" in legacy_fields:
-                stock_index = legacy_fields.index("股票")
+            if legacy_fields and legacy_data and "?∠巨" in legacy_fields:
+                stock_index = legacy_fields.index("?∠巨")
                 stats = {}
                 for row in legacy_data:
                     label = str(row[0])
-                    if label.startswith("上漲"):
+                    if label.startswith("銝撞"):
                         stats["advance"] = parse_twse_count(str(row[stock_index]))
-                    elif label.startswith("下跌"):
+                    elif label.startswith("銝?"):
                         stats["decline"] = parse_twse_count(str(row[stock_index]))
-                    elif label.startswith("持平"):
+                    elif label.startswith("?像"):
                         stats["unchanged"] = parse_twse_count(str(row[stock_index]))
                 if {"advance", "decline", "unchanged"} <= stats.keys():
                     return {"date": day.strftime("%Y-%m-%d"), **stats}
@@ -382,9 +455,9 @@ def fetch_tpex_breadth(public_session: requests.Session, day: pd.Timestamp) -> d
             html = response.text
             return {
                 "date": day.strftime("%Y-%m-%d"),
-                "advance": parse_tpex_single_value(html, "上漲家數"),
-                "decline": parse_tpex_single_value(html, "下跌家數"),
-                "unchanged": parse_tpex_single_value(html, "平盤家數"),
+                "advance": parse_tpex_single_value(html, "銝撞摰嗆"),
+                "decline": parse_tpex_single_value(html, "銝?摰嗆"),
+                "unchanged": parse_tpex_single_value(html, "撟喟摰嗆"),
             }
         except Exception as exc:  # noqa: BLE001
             last_error = exc
@@ -473,25 +546,18 @@ def fetch_breadth(public_session: requests.Session, trading_days: list[pd.Timest
     return df.sort_values("date").reset_index(drop=True)
 
 
-def build_index_frame(
+def build_feature_frame(
     finmind_session: requests.Session,
     public_session: requests.Session,
     *,
-    analysis_days: int,
-    warmup_days: int,
+    fetch_start: str,
     percentile_window: int,
     min_periods: int,
-    smoothing_span: int,
     cache_dir: Path,
     end_date: str | None,
 ) -> pd.DataFrame:
-    requested_end = pd.Timestamp(end_date).normalize() if end_date else pd.Timestamp.today().normalize()
-    analysis_start = requested_end - pd.Timedelta(days=analysis_days)
-    fetch_start = (analysis_start - pd.Timedelta(days=warmup_days)).strftime("%Y-%m-%d")
-
     taiex = fetch_taiex(finmind_session, fetch_start, end_date)
     actual_end = taiex["date"].max()
-    analysis_start = actual_end - pd.Timedelta(days=analysis_days)
     trading_days = taiex["date"].drop_duplicates().sort_values().tolist()
 
     margin = fetch_margin(finmind_session, fetch_start, actual_end.strftime("%Y-%m-%d"))
@@ -514,15 +580,137 @@ def build_index_frame(
 
     weighted_total = sum(frame[spec.score_column] * spec.weight for spec in INDICATORS)
     frame["fear_greed_index_raw"] = weighted_total.round(2)
-    frame["fear_greed_index"] = (
-        frame["fear_greed_index_raw"]
-        .ewm(span=smoothing_span, adjust=False, min_periods=1)
-        .mean()
-        .round(2)
-    )
-    frame["rating"] = frame["fear_greed_index"].apply(lambda value: rating_label_en(value) if pd.notna(value) else None)
+    return frame.sort_values("date").reset_index(drop=True)
 
+
+def build_index_frame(
+    finmind_session: requests.Session,
+    public_session: requests.Session,
+    *,
+    analysis_days: int,
+    warmup_days: int,
+    percentile_window: int,
+    min_periods: int,
+    smoothing_span: int,
+    cache_dir: Path,
+    end_date: str | None,
+) -> pd.DataFrame:
+    requested_end = pd.Timestamp(end_date).normalize() if end_date else pd.Timestamp.today().normalize()
+    analysis_start = requested_end - pd.Timedelta(days=analysis_days)
+    fetch_start = (analysis_start - pd.Timedelta(days=warmup_days)).strftime("%Y-%m-%d")
+
+    frame = build_feature_frame(
+        finmind_session,
+        public_session,
+        fetch_start=fetch_start,
+        percentile_window=percentile_window,
+        min_periods=min_periods,
+        cache_dir=cache_dir,
+        end_date=end_date,
+    )
+    actual_end = frame["date"].max()
+    analysis_start = actual_end - pd.Timedelta(days=analysis_days)
+    frame["fear_greed_index"] = ema_with_seed(frame["fear_greed_index_raw"], span=smoothing_span).round(2)
+    frame["rating"] = frame["fear_greed_index"].apply(lambda value: rating_label_en(value) if pd.notna(value) else None)
     return frame.loc[frame["date"] >= analysis_start].reset_index(drop=True)
+
+
+def build_incremental_frame(
+    finmind_session: requests.Session,
+    public_session: requests.Session,
+    *,
+    output_dir: Path,
+    analysis_days: int,
+    warmup_days: int,
+    percentile_window: int,
+    min_periods: int,
+    smoothing_span: int,
+    cache_dir: Path,
+    end_date: str | None,
+) -> pd.DataFrame:
+    existing_frame = load_existing_history_frame(output_dir)
+    existing_last_date_from_json = load_existing_history_json_last_date(output_dir)
+
+    if existing_frame is None:
+        if existing_last_date_from_json is not None:
+            print("[incremental] history.json exists but history.csv is missing; falling back to a full rebuild.", flush=True)
+        return build_index_frame(
+            finmind_session,
+            public_session,
+            analysis_days=analysis_days,
+            warmup_days=warmup_days,
+            percentile_window=percentile_window,
+            min_periods=min_periods,
+            smoothing_span=smoothing_span,
+            cache_dir=cache_dir,
+            end_date=end_date,
+        )
+
+    existing_last_date = existing_frame["date"].max()
+    if existing_last_date_from_json is not None and existing_last_date_from_json != existing_last_date:
+        print("[incremental] history.json and history.csv disagree; using history.csv as the source of truth.", flush=True)
+
+    requested_end = pd.Timestamp(end_date).normalize() if end_date else pd.Timestamp.today().normalize()
+    if end_date and requested_end < existing_last_date:
+        print("[incremental] Requested end_date is older than cached output; running a full rebuild instead.", flush=True)
+        return build_index_frame(
+            finmind_session,
+            public_session,
+            analysis_days=analysis_days,
+            warmup_days=warmup_days,
+            percentile_window=percentile_window,
+            min_periods=min_periods,
+            smoothing_span=smoothing_span,
+            cache_dir=cache_dir,
+            end_date=end_date,
+        )
+
+    recompute_start = max(
+        existing_frame["date"].min(),
+        existing_last_date - pd.Timedelta(days=DEFAULT_INCREMENTAL_RECOMPUTE_DAYS),
+    )
+    fetch_start = (recompute_start - pd.Timedelta(days=warmup_days)).strftime("%Y-%m-%d")
+
+    frame = build_feature_frame(
+        finmind_session,
+        public_session,
+        fetch_start=fetch_start,
+        percentile_window=percentile_window,
+        min_periods=min_periods,
+        cache_dir=cache_dir,
+        end_date=end_date,
+    )
+    actual_end = frame["date"].max()
+
+    if not end_date and actual_end <= existing_last_date:
+        print(f"[incremental] No missing trading dates after {existing_last_date:%Y-%m-%d}; reusing cached output.", flush=True)
+        analysis_start = existing_last_date - pd.Timedelta(days=analysis_days)
+        return existing_frame.loc[existing_frame["date"] >= analysis_start].reset_index(drop=True)
+
+    recompute_frame = frame.loc[frame["date"] >= recompute_start].copy()
+    ema_seed_series = existing_frame.loc[existing_frame["date"] < recompute_start, "fear_greed_index"].dropna()
+    ema_seed = float(ema_seed_series.iloc[-1]) if not ema_seed_series.empty else None
+    recompute_frame["fear_greed_index"] = ema_with_seed(
+        recompute_frame["fear_greed_index_raw"],
+        span=smoothing_span,
+        seed=ema_seed,
+    ).round(2)
+    recompute_frame["rating"] = recompute_frame["fear_greed_index"].apply(
+        lambda value: rating_label_en(value) if pd.notna(value) else None
+    )
+
+    preserved_frame = existing_frame.loc[existing_frame["date"] < recompute_start].copy()
+    combined = pd.concat([preserved_frame, recompute_frame], ignore_index=True, sort=False)
+    combined = normalize_history_frame(combined)
+
+    analysis_start = actual_end - pd.Timedelta(days=analysis_days)
+    final_frame = combined.loc[combined["date"] >= analysis_start].reset_index(drop=True)
+    print(
+        f"[incremental] Updated from {existing_last_date:%Y-%m-%d} to {actual_end:%Y-%m-%d} "
+        f"with a recompute window starting {recompute_start:%Y-%m-%d}.",
+        flush=True,
+    )
+    return final_frame
 
 
 def build_latest_payload(frame: pd.DataFrame) -> dict[str, Any]:
@@ -860,9 +1048,10 @@ def main() -> int:
     finmind_session = create_finmind_session(token)
     public_session = create_public_session()
 
-    frame = build_index_frame(
+    frame = build_incremental_frame(
         finmind_session,
         public_session,
+        output_dir=output_dir,
         analysis_days=args.analysis_days,
         warmup_days=args.warmup_days,
         percentile_window=args.percentile_window,
