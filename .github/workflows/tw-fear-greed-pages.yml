@@ -8,11 +8,7 @@ on:
         required: false
         type: string
   schedule:
-<<<<<<< HEAD
-    - cron: "10 14 * * 1-5"
-=======
     - cron: "0 9 * * 1-5"
->>>>>>> 73adc10 (Add Taiwan fear greed automation and market cards)
 
 permissions:
   contents: read
